@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/uwuauth-store",
+    "crates/uwuauth-mail",
     "crates/uwuauth-web",
     "crates/uwuauth-api",
     "crates/uwuauth-server",
@@ -16,21 +17,35 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 uwuauth-api = { path = "crates/uwuauth-api" }
+uwuauth-mail = { path = "crates/uwuauth-mail" }
 uwuauth-server = { path = "crates/uwuauth-server" }
 uwuauth-store = { path = "crates/uwuauth-store" }
 uwuauth-web = { path = "crates/uwuauth-web" }
 
+# Passwords and app passwords: Argon2id.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash", "std"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "tokio", "query", "form"] }
 # TLS with the server's own certificate files or one from Let's Encrypt; the provider is chosen below.
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+base64 = "0.22"
+# WebAuthn: what authenticators send is CBOR.
+ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 # Timeouts for reading a request's head, below axum-server.
 hyper-util = { version = "0.1", features = ["tokio"] }
+# Time windows for kids' accounts are local times: the time zone database comes with the binary,
+# so the distroless image needs none.
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
+# Mail over SMTP, TLS by rustls with `ring` like everything else here.
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "pool", "smtp-transport", "tokio1-rustls-tls"] }
 libc = "0.2"
 parking_lot = "0.12"
 # Health check and update check: rustls with `ring`, set up by hand, so nothing pulls in a second
 # crypto library.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "http2"] }
+# Signing tokens, sealing secrets, hashing, random numbers and TOTP: the crypto rustls brings
+# along anyway.
+ring = "0.17"
 # Bundled SQLite, so the server never depends on whichever libsqlite3 is around.
 rusqlite = { version = "0.40", features = ["bundled"] }
 # `ring` rather than aws-lc: it needs no C toolchain beyond a compiler, which keeps the arm64
@@ -49,6 +64,7 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "set-header", "limit", "timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 webpki-roots = "1"
 
 # Tests only.
@@ -65,6 +81,12 @@ debug = "line-tables-only"
 debug = false
 
 [profile.dev.package.ring]
+opt-level = 3
+
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
 opt-level = 3
 
 [profile.release]

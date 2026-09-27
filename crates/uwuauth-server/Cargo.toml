@@ -17,12 +17,14 @@ path = "tests/integration/main.rs"
 
 [dependencies]
 uwuauth-api.workspace = true
+uwuauth-mail.workspace = true
 uwuauth-store.workspace = true
 
 axum.workspace = true
 axum-server.workspace = true
 clap.workspace = true
 hyper-util.workspace = true
+jiff.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
