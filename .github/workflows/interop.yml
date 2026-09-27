@@ -1,0 +1,75 @@
+name: Interop
+
+# Real apps against UwUAuth: Grafana and Forgejo sign in with OpenID Connect in a browser,
+# Nextcloud finds people over LDAP and signs in with OpenID Connect. Too slow and too big for
+# every push (the images alone are gigabytes), so: once a week, for every release tag, and by
+# hand. The same SSSD test as in CI runs here too, against the same build.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: The server, with its web app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: The web app
+        working-directory: web
+        run: pnpm install --frozen-lockfile && pnpm build
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: interop
+      - run: cargo build --release --locked -p uwuauth-server
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: interop-binary
+          path: target/release/uwuauth-server
+          retention-days: 3
+
+  apps:
+    name: ${{ matrix.apps }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        apps: [ldap, oidc, nextcloud]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: interop-binary
+          path: dist
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: scripts/interop/package.json
+      - name: Playwright's package (its browsers come with its image)
+        working-directory: scripts/interop
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: pnpm install --frozen-lockfile
+      - run: scripts/interop/run.sh dist/uwuauth-server "${{ matrix.apps }}"
