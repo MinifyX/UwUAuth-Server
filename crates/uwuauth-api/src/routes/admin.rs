@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use uwuauth_mail::Language;
-use uwuauth_store::{AttributeDef, EVERYONE_ID, EventFilter, GroupFields, Members, NewPerson, backups, with_suffix};
+use uwuauth_store::{
+    ADMINS_ID, AttributeDef, EVERYONE_ID, EventFilter, GroupFields, Members, NewPerson, backups, with_suffix,
+};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
@@ -549,6 +551,9 @@ async fn import(
     // Groups first, so people can go into them.
     let mut group_ids: BTreeMap<String, String> =
         state.store.groups().await?.into_iter().map(|group| (group.name.to_lowercase(), group.id)).collect();
+    // Groups this import makes: only theirs get members from it. A group that is there already —
+    // `admins` above all — stays as it is.
+    let mut created_groups: BTreeSet<String> = BTreeSet::new();
     for group in &directory.groups {
         let Ok(name) = group_name(&group.name) else { continue };
         if group_ids.contains_key(&name.to_lowercase()) {
@@ -565,10 +570,13 @@ async fn import(
                     ldap_app_passwords_only: group.ldap_app_passwords_only,
                 })
                 .await?;
+            created_groups.insert(made.id.clone());
             group_ids.insert(name.to_lowercase(), made.id);
         }
         push(&mut report, ["groups", "created"], json!(name));
     }
+    let builtin: BTreeSet<String> = [ADMINS_ID.to_string(), EVERYONE_ID.to_string()].into();
+    let defs = state.store.attribute_defs().await?;
     let mut person_ids: BTreeMap<String, String> =
         state.store.people().await?.into_iter().map(|person| (person.username.clone(), person.id)).collect();
     for person in &directory.people {
@@ -618,10 +626,24 @@ async fn import(
                     continue;
                 }
             };
-            let groups: Vec<String> =
-                person.groups.iter().filter_map(|name| group_ids.get(&name.to_lowercase()).cloned()).collect();
+            // Never into a group that comes with the server: an export of another server must not
+            // make anybody an admin here.
+            let groups: Vec<String> = person
+                .groups
+                .iter()
+                .filter_map(|name| group_ids.get(&name.to_lowercase()).cloned())
+                .filter(|id| !builtin.contains(id))
+                .collect();
             state.store.set_groups_of(&made.id, groups).await?;
-            state.store.set_attributes(&made.id, person.attributes.clone()).await?;
+            let attributes: BTreeMap<String, String> = person
+                .attributes
+                .iter()
+                .filter_map(|(name, value)| {
+                    let def = defs.iter().find(|def| &def.name == name)?;
+                    Some((name.clone(), crate::routes::people::check_attribute(def, value).ok()?))
+                })
+                .collect();
+            state.store.set_attributes(&made.id, attributes).await?;
             person_ids.insert(username.clone(), made.id);
         }
         push(&mut report, ["people", "created"], json!(username));
@@ -630,6 +652,9 @@ async fn import(
     if !query.dry_run {
         for group in &directory.groups {
             let Some(id) = group_ids.get(&group.name.trim().to_lowercase()) else { continue };
+            if !created_groups.contains(id) {
+                continue;
+            }
             let current = state.store.members(id).await?;
             let mut people: BTreeSet<String> = current.people.into_iter().collect();
             people.extend(group.members.iter().filter_map(|name| person_ids.get(name).cloned()));

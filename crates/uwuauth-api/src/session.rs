@@ -329,6 +329,18 @@ impl FromRequestParts<AppState> for AdminOnly {
             if found.read_only && parts.method != Method::GET && parts.method != Method::HEAD {
                 return Err(ApiError::forbidden("This token may only read."));
             }
+            // A token is worth what its maker is: once they are no admin any more (or gone), it
+            // stops.
+            let maker_is_admin = match &found.created_by {
+                Some(maker) => {
+                    state.store.admin_ids().await?.contains(maker)
+                        && state.store.person(maker).await?.is_some_and(|person| person.active())
+                }
+                None => false,
+            };
+            if !maker_is_admin {
+                return Err(ApiError::unauthorized());
+            }
             return Ok(AdminOnly::Token(found));
         }
         let me = Me::from_request_parts(parts, state).await?;

@@ -93,35 +93,48 @@ async fn login(
     }
     let name: String = login.login.trim().chars().take(254).collect();
     let person = state.store.person_by_login(&name).await?;
-    if let Some(person) = &person
-        && let Some(reason) = policy::refusal(&state, person).await?
-    {
-        audit(&state, "login_refused", None, Some(&person.id), None, &ip, json!({ "reason": reason })).await;
-        return Err(refused(reason));
-    }
+    // The password first, whoever it is and whatever state they are in: the answer and the time
+    // it takes say nothing about a name until the password fits.
     let hash = person.as_ref().and_then(|person| person.password_hash.as_deref());
     let right = verify_password(state.config.hash_cost, hash, &login.password).await;
+    let device = crate::session::cookie(&headers, crate::session::DEVICE_COOKIE);
     let Some(person) = person.filter(|_| right) else {
-        if let Some(person) = state.store.person_by_login(&name).await? {
-            state.limits.account.take(person.id.clone());
-            audit(&state, "login_failed", None, Some(&person.id), None, &ip, json!({ "method": "pwd" })).await;
-        } else {
-            audit(&state, "login_failed", None, None, None, &ip, json!({ "login": name })).await;
+        match state.store.person_by_login(&name).await? {
+            Some(person) => {
+                audit(&state, "login_failed", None, Some(&person.id), None, &ip, json!({ "method": "pwd" })).await
+            }
+            None => audit(&state, "login_failed", None, None, None, &ip, json!({ "login": name })).await,
         }
         return Err(wrong());
     };
-    if !state.limits.account.allows(&person.id) {
-        return Err(ApiError::too_many());
+    // Too many wrong passwords lately, from a device they never used: the right one counts as
+    // wrong for a while, and says nothing else.
+    if policy::locked(&state, &person, device).await? {
+        audit(&state, "login_refused", None, Some(&person.id), None, &ip, json!({ "reason": "locked" })).await;
+        return Err(wrong());
     }
-    let factors = second_factors(&state, &person).await?;
+    if let Some(reason) = policy::refusal(&state, &person).await? {
+        audit(&state, "login_refused", None, Some(&person.id), None, &ip, json!({ "reason": reason })).await;
+        return Err(refused(reason));
+    }
+    second_step(&state, &person, &[SignIn::Password], login.remember, ip, &headers).await
+}
+
+/// After a password: a second step for somebody who has one, a session for everybody else.
+pub(crate) async fn second_step(
+    state: &AppState,
+    person: &Person,
+    methods: &[SignIn],
+    remember: bool,
+    ip: IpAddr,
+    headers: &HeaderMap,
+) -> ApiResult<Response> {
+    let factors = second_factors(state, person).await?;
     if factors.is_empty() {
-        return finish(&state, &person, &[SignIn::Password], login.remember, ip, &headers).await;
+        return finish(state, person, methods, remember, ip, headers).await;
     }
     let token = random_token(24);
-    state
-        .memory
-        .pending
-        .put(token.clone(), PendingLogin { person_id: person.id.clone(), remember: login.remember, tries: 0 });
+    state.memory.pending.put(token.clone(), PendingLogin { person_id: person.id.clone(), remember, tries: 0 });
     Ok(Json(json!({ "status": "second_factor", "pending": token, "methods": factors })).into_response())
 }
 
@@ -371,6 +384,10 @@ async fn reauth(
             audit(&state, "reauth_failed", Some(&person.id), Some(&person.id), None, &ip, json!({})).await;
             return Err(wrong());
         }
+        if person.totp_secret.is_none() && !state.store.passkeys(&person.id).await?.is_empty() {
+            // Their second factor is a passkey: confirming takes it, not the password alone.
+            return Err(ApiError::bad("use_passkey", "Confirm with your passkey."));
+        }
         if person.totp_secret.is_some() {
             let code = body.code.as_deref().unwrap_or_default();
             if !check_totp(&state, person, code).await? {
@@ -428,9 +445,15 @@ async fn forgot(
         )
         .await?;
     let mail = Mail::PasswordReset { link: state.link(&format!("/reset?token={token}")), minutes: RESET_MINUTES };
-    if let Err(error) = state.mailer.send(&to, &mail, Language::from_code(&person.language)).await {
-        tracing::warn!(%error, "the mail with a new password link did not go out");
-    }
+    // In the background: waiting for the mail server would tell, by the time taken, that the
+    // account exists.
+    let mailer = state.mailer.clone();
+    let language = Language::from_code(&person.language);
+    tokio::spawn(async move {
+        if let Err(error) = mailer.send(&to, &mail, language).await {
+            tracing::warn!(%error, "the mail with a new password link did not go out");
+        }
+    });
     audit(&state, "reset_requested", None, Some(&person.id), None, &ip, json!({})).await;
     Ok(StatusCode::ACCEPTED)
 }

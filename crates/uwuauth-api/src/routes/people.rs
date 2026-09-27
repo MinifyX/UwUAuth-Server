@@ -61,12 +61,27 @@ impl Access {
             return Ok(Access::Admin);
         }
         let membership = state.store.membership().await?;
-        let everybody: Vec<String> = state.store.people().await?.into_iter().map(|person| person.id).collect();
+        let people = state.store.people().await?;
+        let everybody: Vec<String> = people.iter().map(|person| person.id.clone()).collect();
         let managed = state.store.people_managed_by(&me.person.id, &membership, &everybody).await?;
         if managed.is_empty() && !state.store.managers().await?.contains(&me.person.id) {
             return Err(ApiError::forbidden("Only admins and managers can do this."));
         }
-        Ok(Access::Manager(managed))
+        // A manager looks after accounts that are looked after: a kid's, not an admin's, not
+        // another manager's — whoever ended up in a group they manage.
+        let admins = membership.people_in(ADMINS_ID, &[]);
+        let managers = state.store.managers().await?;
+        let reachable = people
+            .iter()
+            .filter(|person| {
+                managed.contains(&person.id)
+                    && person.managed
+                    && !admins.contains(&person.id)
+                    && !managers.contains(&person.id)
+            })
+            .map(|person| person.id.clone())
+            .collect();
+        Ok(Access::Manager(reachable))
     }
 
     fn admin(&self) -> ApiResult<()> {
@@ -563,6 +578,8 @@ async fn link(
     Path(id): Path<String>,
     body: Option<Json<LinkRequest>>,
 ) -> ApiResult<Json<Value>> {
+    // A link is as good as the account's password: only somebody who confirmed a moment ago.
+    me.require_fresh()?;
     let (_, person) = target(&state, &me, &id).await?;
     if person.deleted.is_some() {
         return Err(ApiError::not_found());
@@ -694,12 +711,20 @@ async fn set_groups(
     access.admin()?;
     let known: BTreeSet<String> = state.store.groups().await?.into_iter().map(|group| group.id).collect();
     let groups: Vec<String> = body.groups.into_iter().filter(|group| known.contains(group)).collect();
-    if !groups.iter().any(|group| group == ADMINS_ID) {
-        let membership = state.store.membership().await?;
-        if membership.people.get(ADMINS_ID).is_some_and(|admins| admins.contains(&person.id)) {
-            keep_an_admin(&state, &person.id).await?;
-        }
+    let mut after = state.store.membership().await?;
+    let admin_groups = super::groups::admin_groups(&after);
+    let before: BTreeSet<String> = after.direct_groups_of(&person.id);
+    // Making somebody an admin, or not one any more, is as much as a password: confirmed a moment ago.
+    if groups.iter().chain(before.iter()).any(|group| admin_groups.contains(group)) {
+        me.require_fresh()?;
     }
+    for members in after.people.values_mut() {
+        members.remove(&person.id);
+    }
+    for group in &groups {
+        after.people.entry(group.clone()).or_default().insert(person.id.clone());
+    }
+    super::groups::keep_admins(&state, &after).await?;
     state.store.set_groups_of(&person.id, groups.clone()).await?;
     audit(
         &state,
@@ -727,6 +752,7 @@ async fn set_managers(
     Path(id): Path<String>,
     Json(body): Json<ManagerList>,
 ) -> ApiResult<StatusCode> {
+    me.require_fresh()?;
     let (access, person) = target(&state, &me, &id).await?;
     access.admin()?;
     let wanted: BTreeSet<String> = body.managers.into_iter().filter(|manager| *manager != person.id).collect();
@@ -762,6 +788,7 @@ async fn set_manages(
     Path(id): Path<String>,
     Json(body): Json<Manages>,
 ) -> ApiResult<StatusCode> {
+    me.require_fresh()?;
     let (access, person) = target(&state, &me, &id).await?;
     access.admin()?;
     state.store.set_managed(&person.id, Managed { people: body.people, groups: body.groups }).await?;

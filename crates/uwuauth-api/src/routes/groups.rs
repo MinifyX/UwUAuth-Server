@@ -14,6 +14,35 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use uwuauth_store::{ADMINS_ID, EVERYONE_ID, Group, GroupFields, Members};
 
+/// `admins` and every group inside it: whoever is in one of them is an admin, so only admins
+/// change them.
+pub(crate) fn admin_groups(membership: &uwuauth_store::Membership) -> BTreeSet<String> {
+    let mut found = BTreeSet::from([ADMINS_ID.to_string()]);
+    let mut queue = vec![ADMINS_ID.to_string()];
+    while let Some(group) = queue.pop() {
+        for inner in membership.groups.get(&group).into_iter().flatten() {
+            if found.insert(inner.clone()) {
+                queue.push(inner.clone());
+            }
+        }
+    }
+    found
+}
+
+/// Refuse a change that would leave no active admin: `membership` is how it would be after it.
+pub(crate) async fn keep_admins(state: &AppState, membership: &uwuauth_store::Membership) -> ApiResult<()> {
+    let before = state.store.admin_ids().await?;
+    if before.is_empty() {
+        return Ok(());
+    }
+    for admin in membership.people_in(ADMINS_ID, &[]) {
+        if state.store.person(&admin).await?.is_some_and(|person| person.active()) {
+            return Ok(());
+        }
+    }
+    Err(ApiError::bad("last_admin", "That would leave no admin."))
+}
+
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/uwu/v1/groups", get(list).post(create))
@@ -193,6 +222,16 @@ async fn remove(
     if group.builtin.is_some() {
         return Err(ApiError::bad("builtin", "This group comes with the server and stays."));
     }
+    let mut after = state.store.membership().await?;
+    if admin_groups(&after).contains(&id) {
+        me.require_fresh()?;
+    }
+    after.people.remove(&id);
+    after.groups.remove(&id);
+    for inner in after.groups.values_mut() {
+        inner.remove(&id);
+    }
+    keep_admins(&state, &after).await?;
     state.store.delete_group(&id).await?;
     audit(&state, "group_deleted", Some(&me.person.id), None, Some(&id), &ip, json!({ "name": group.name })).await;
     Ok(StatusCode::NO_CONTENT)
@@ -218,6 +257,14 @@ async fn set_members(
         return Err(ApiError::bad("builtin", "Everybody is in this group by themselves."));
     }
     let current = state.store.members(&id).await?;
+    let mut membership = state.store.membership().await?;
+    let admin_group = admin_groups(&membership).contains(&id);
+    if !is_admin && admin_group {
+        return Err(ApiError::forbidden("Only admins change who is in a group that makes admins."));
+    }
+    if admin_group {
+        me.require_fresh()?;
+    }
     let owners = match body.owners {
         Some(owners) if is_admin => owners,
         Some(owners) if owners != current.owners => {
@@ -227,28 +274,17 @@ async fn set_members(
     };
     let people: BTreeSet<String> = state.store.people().await?.into_iter().map(|person| person.id).collect();
     let groups: BTreeSet<String> = state.store.groups().await?.into_iter().map(|group| group.id).collect();
+    // Owners change who is in their group, person by person; which groups are inside it is the
+    // admins' to say — a group put inside could be anybody's.
+    let inner = if is_admin { body.groups } else { current.groups };
     let members = Members {
         people: body.people.into_iter().filter(|id| people.contains(id)).collect(),
-        groups: body.groups.into_iter().filter(|id| groups.contains(id)).collect(),
+        groups: inner.into_iter().filter(|id| groups.contains(id)).collect(),
         owners: owners.into_iter().filter(|id| people.contains(id)).collect(),
     };
-    if id == ADMINS_ID {
-        // Whoever leaves `admins` must leave another admin behind.
-        let before = state.store.admin_ids().await?;
-        let mut membership = state.store.membership().await?;
-        membership.people.insert(id.clone(), members.people.iter().cloned().collect());
-        membership.groups.insert(id.clone(), members.groups.iter().cloned().collect());
-        let after = membership.people_in(ADMINS_ID, &[]);
-        let mut active = 0;
-        for admin in &after {
-            if state.store.person(admin).await?.is_some_and(|person| person.active()) {
-                active += 1;
-            }
-        }
-        if active == 0 && !before.is_empty() {
-            return Err(ApiError::bad("last_admin", "That would leave no admin."));
-        }
-    }
+    membership.people.insert(id.clone(), members.people.iter().cloned().collect());
+    membership.groups.insert(id.clone(), members.groups.iter().cloned().collect());
+    keep_admins(&state, &membership).await?;
     let count = members.people.len();
     state.store.set_members(&id, members).await?;
     audit(

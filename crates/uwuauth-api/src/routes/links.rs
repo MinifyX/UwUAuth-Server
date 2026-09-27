@@ -13,7 +13,7 @@
 use super::{NewPasskey, new_password, passkey_options, register_passkey};
 use crate::crypto::{hash_password, sha256};
 use crate::errors::{ApiError, ApiResult};
-use crate::routes::login::finish;
+use crate::routes::login::{finish, second_step};
 use crate::session::{ClientIp, SignIn};
 use crate::{AppState, audit, policy};
 use axum::extract::{Path, State};
@@ -310,6 +310,16 @@ async fn set_up(
     body: Complete,
 ) -> ApiResult<Response> {
     let person = person_of(state, &link).await?;
+    // Somebody with a second factor keeps needing it: a link sets a new password, and the sign-in
+    // after it asks for the passkey or the app like any other. A new passkey through a link would
+    // be a way around that, so there is none for them.
+    let has_second = person.totp_secret.is_some() || !state.store.passkeys(&person.id).await?.is_empty();
+    if has_second && body.passkey.is_some() {
+        return Err(ApiError::bad(
+            "second_factor_kept",
+            "Set a new password here; your passkey or authenticator app stays and is asked for next.",
+        ));
+    }
     let method = match (&body.password, &body.passkey) {
         (Some(password), None) => {
             let hash = new_password(state, &person, password).await?;
@@ -344,6 +354,9 @@ async fn set_up(
     let kind = if purpose == Purpose::Setup { "account_set_up" } else { "password_reset" };
     audit(state, kind, None, Some(&person.id), Some(&link.id), &ip, json!({ "method": method.amr() })).await;
     let person = state.store.person(&person.id).await?.ok_or_else(ApiError::not_found)?;
+    if method == SignIn::Password {
+        return second_step(state, &person, &[method], body.remember, ip, headers).await;
+    }
     finish(state, &person, &[method], body.remember, ip, headers).await
 }
 

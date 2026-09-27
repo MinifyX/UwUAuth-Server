@@ -112,17 +112,23 @@ async fn an_invitation_accepted_with_a_passkey_signs_in_with_it() {
 #[tokio::test]
 async fn a_wrong_password_is_refused_and_counted() {
     let server = TestServer::new().await;
-    server.person("nyu", false).await;
-    let browser = server.browser();
-    let (status, body) = login(&browser, "nyu", "wrong password").await;
+    let own_device = server.person("nyu", false).await;
+    let stranger = server.browser();
+    let (status, body) = login(&stranger, "nyu", "wrong password").await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("wrong")));
-    let (status, _) = login(&browser, "nobody", "wrong password").await;
+    let (status, _) = login(&stranger, "nobody", "wrong password").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "the same answer for a name nobody has");
     for _ in 0..9 {
-        login(&browser, "nyu", "wrong password").await;
+        login(&stranger, "nyu", "wrong password").await;
     }
-    let (status, body) = login(&browser, "nyu", PASSWORD).await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("locked")), "ten wrong ones lock it");
+    // Locked for devices it never saw: even the right password counts as wrong there, and says
+    // nothing about the account.
+    let (status, body) = login(&stranger, "nyu", PASSWORD).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("wrong")));
+    // The owner's own device still gets in.
+    own_device.post("/uwu/v1/logout", json!({})).await;
+    let (status, _) = login(&own_device, "nyu", PASSWORD).await;
+    assert_eq!(status, StatusCode::OK, "a stranger cannot lock the owner out");
     let events = server
         .state
         .store
@@ -559,4 +565,172 @@ async fn signing_out_ends_the_session() {
         .unwrap();
     assert_eq!(server.send(replay).await.status(), StatusCode::UNAUTHORIZED, "the old cookie is worth nothing");
     browser.forget_cookies();
+}
+
+// ── What the security review found, fixed ─────────────────
+
+/// Make the session in `browser` look like its sign-in was long ago.
+async fn age(server: &TestServer, browser: &Browser<'_>) {
+    let id = browser.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    for mut session in server.state.store.sessions_of(&id).await.unwrap() {
+        server.state.store.end_session(&session.id).await.unwrap();
+        session.auth_time = clock::in_seconds(-3600);
+        server.state.store.create_session(session).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_reset_link_still_asks_for_the_second_factor() {
+    let server = TestServer::new().await;
+    let token = server
+        .invitation(InviteFields {
+            email: Some("nyu@example.com".into()),
+            mail: true,
+            admin: true,
+            ..InviteFields::default()
+        })
+        .await;
+    let owner = server.browser();
+    owner
+        .ok("POST", &format!("/uwu/v1/links/invite/{token}"), json!({ "username": "nyu", "password": PASSWORD }))
+        .await;
+    let setup = owner.ok("POST", "/uwu/v1/me/totp/start", json!({})).await;
+    owner.ok("POST", "/uwu/v1/me/totp", json!({ "code": code(setup["secret"].as_str().unwrap(), 0) })).await;
+
+    let thief = server.browser();
+    thief.post("/uwu/v1/forgot", json!({ "login": "nyu@example.com" })).await;
+    let reset = token_of(server.mail_to("nyu@example.com").unwrap().link().unwrap());
+    let options = thief.request("POST", &format!("/uwu/v1/links/reset/{reset}/passkey-options"), Some(json!({}))).await;
+    if options.status() == StatusCode::OK {
+        let key = crate::webauthn::tests::SoftKey::new();
+        let refused = thief
+            .post(
+                &format!("/uwu/v1/links/reset/{reset}"),
+                json!({ "passkey": { "credential": key.create(&json(options).await, PUBLIC) } }),
+            )
+            .await;
+        assert_eq!(json(refused).await["error"], "second_factor_kept");
+    }
+    let answer = thief
+        .ok("POST", &format!("/uwu/v1/links/reset/{reset}"), json!({ "password": "a new password of mine" }))
+        .await;
+    assert_eq!(answer["status"], "second_factor", "a new password alone is no way in");
+    assert_eq!(thief.get("/uwu/v1/me").await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_manager_reaches_managed_accounts_only_and_an_owner_only_people() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let parent = server.person("mama", false).await;
+    let parent_id = parent.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let admin_id = admin.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let kids =
+        admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Kinder" })).await["id"].as_str().unwrap().to_string();
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{kids}/members"),
+            json!({ "people": [admin_id], "groups": [], "owners": [parent_id] }),
+        )
+        .await;
+    admin.ok("PUT", &format!("/uwu/v1/people/{parent_id}/manages"), json!({ "people": [], "groups": [kids] })).await;
+    // The admin is in Kinder, but no account the parent looks after.
+    assert_eq!(parent.json("/uwu/v1/people").await, json!([]));
+    assert_eq!(
+        parent.request("POST", &format!("/uwu/v1/people/{admin_id}/disable"), Some(json!({}))).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    // An owner changes people, not the groups inside: `admins` does not go into Kinder.
+    parent
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{kids}/members"),
+            json!({ "people": [], "groups": [uwuauth_store::ADMINS_ID] }),
+        )
+        .await;
+    assert!(admin.json(&format!("/uwu/v1/groups/{kids}")).await["groups"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_group_inside_admins_is_the_admins_to_change() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let owner = server.person("owner", false).await;
+    let owner_id = owner.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let admin_id = admin.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let parents =
+        admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Eltern" })).await["id"].as_str().unwrap().to_string();
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{parents}/members"),
+            json!({ "people": [], "groups": [], "owners": [owner_id.clone()] }),
+        )
+        .await;
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{}/members", uwuauth_store::ADMINS_ID),
+            json!({ "people": [admin_id], "groups": [parents] }),
+        )
+        .await;
+    let refused =
+        owner.request("PUT", &format!("/uwu/v1/groups/{parents}/members"), Some(json!({ "people": [owner_id] }))).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN, "no way to make oneself an admin");
+}
+
+#[tokio::test]
+async fn powerful_admin_actions_want_a_recent_sign_in() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let other = server.person("other", true).await;
+    let other_id = other.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    age(&server, &admin).await;
+    let link = admin.request("POST", &format!("/uwu/v1/people/{other_id}/link"), Some(json!({}))).await;
+    assert_eq!(json(link).await["error"], "reauth");
+    let invite = admin.request("POST", "/uwu/v1/invitations", Some(json!({ "admin": true }))).await;
+    assert_eq!(json(invite).await["error"], "reauth");
+    let groups =
+        admin.request("PUT", &format!("/uwu/v1/people/{other_id}/groups"), Some(json!({ "groups": [] }))).await;
+    assert_eq!(json(groups).await["error"], "reauth");
+}
+
+#[tokio::test]
+async fn somebody_with_a_passkey_confirms_with_it() {
+    let server = TestServer::new().await;
+    let browser = server.person("nyu", false).await;
+    browser.add_passkey().await;
+    let refused = browser.request("POST", "/uwu/v1/reauth", Some(json!({ "password": PASSWORD }))).await;
+    assert_eq!(json(refused).await["error"], "use_passkey");
+}
+
+#[tokio::test]
+async fn a_token_ends_with_its_maker_s_admin_right() {
+    let server = TestServer::new().await;
+    let first = server.person("first", true).await;
+    let second = server.person("second", true).await;
+    let secret =
+        second.ok("POST", "/uwu/v1/tokens", json!({ "name": "script" })).await["secret"].as_str().unwrap().to_string();
+    let second_id = second.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let ask = || {
+        axum::http::Request::get("/uwu/v1/overview")
+            .header("authorization", format!("Bearer {secret}"))
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+    assert_eq!(server.send(ask()).await.status(), StatusCode::OK);
+    first.ok("PUT", &format!("/uwu/v1/people/{second_id}/groups"), json!({ "groups": [] })).await;
+    assert_eq!(server.send(ask()).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn an_import_makes_nobody_an_admin() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let export = json!({ "people": [{ "username": "mallory", "displayName": "M", "groups": ["admins"] }], "groups": [{ "name": "admins", "members": ["mallory"] }] });
+    admin.ok("POST", "/uwu/v1/import", export).await;
+    let people = admin.json("/uwu/v1/people").await;
+    let mallory = people.as_array().unwrap().iter().find(|person| person["username"] == "mallory").unwrap();
+    assert_eq!(mallory["admin"], false);
 }

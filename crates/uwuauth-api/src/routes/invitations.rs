@@ -142,6 +142,14 @@ async fn create(
     ClientIp(ip): ClientIp,
     Json(new): Json<New>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    // An invitation that makes an admin is as much as an admin's password: only a person who
+    // confirmed a moment ago, never a script's token.
+    if new.admin {
+        match &admin {
+            AdminOnly::Person(me) => me.require_fresh()?,
+            AdminOnly::Token(_) => return Err(ApiError::forbidden("A token cannot invite admins.")),
+        }
+    }
     let created_by = admin.person().map(|person| person.id.clone());
     let body = invite(
         &state,

@@ -306,6 +306,7 @@ async fn remove_password(State(state): State<AppState>, me: Me, ClientIp(ip): Cl
 
 async fn new_passkey_options(State(state): State<AppState>, MeSetup(me): MeSetup) -> ApiResult<Json<Value>> {
     me.require_fresh()?;
+    setting_up(&state, &me).await?;
     let existing = state.store.passkeys(&me.person.id).await?;
     let key = format!("register:{}", me.person.id);
     Ok(Json(passkey_options(&state, &key, &me.person.id, &me.person.username, &me.person.display_name, &existing)))
@@ -318,6 +319,7 @@ async fn add_passkey(
     Json(body): Json<NewPasskey>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     me.require_fresh()?;
+    setting_up(&state, &me).await?;
     let passkey = register_passkey(&state, &format!("register:{}", me.person.id), &me.person.id, &body).await?;
     if me.session.restricted {
         state.store.unrestrict(&me.session.id).await?;
@@ -334,6 +336,17 @@ async fn add_passkey(
     .await;
     notify(&state, &me.person, Mail::SignInChanged { what: added(&me.person, "passkey"), time: now_text(&state) });
     Ok((StatusCode::CREATED, Json(passkey_view(&passkey))))
+}
+
+/// A restricted session exists to set up the first second factor, and for nothing else: once
+/// there is one, adding more waits for a full sign-in with it.
+async fn setting_up(state: &AppState, me: &crate::session::Me) -> ApiResult<()> {
+    if me.session.restricted
+        && (me.person.totp_secret.is_some() || !state.store.passkeys(&me.person.id).await?.is_empty())
+    {
+        return Err(ApiError::forbidden("Sign in with your second factor first."));
+    }
+    Ok(())
 }
 
 /// What changed, in the reader's language.
@@ -412,6 +425,7 @@ async fn remove_passkey(
 /// A new secret for the authenticator app, kept in memory until a first code confirms it.
 async fn totp_start(State(state): State<AppState>, MeSetup(me): MeSetup) -> ApiResult<Json<Value>> {
     me.require_fresh()?;
+    setting_up(&state, &me).await?;
     let secret = crate::crypto::random_bytes(20);
     let text = totp::base32_encode(&secret);
     state.memory.totp_setup.put(me.person.id.clone(), secret);
@@ -453,6 +467,7 @@ async fn totp_confirm(
     Json(body): Json<Code>,
 ) -> ApiResult<Json<Value>> {
     me.require_fresh()?;
+    setting_up(&state, &me).await?;
     let secret = state
         .memory
         .totp_setup
@@ -495,11 +510,7 @@ async fn totp_remove(State(state): State<AppState>, me: Me, ClientIp(ip): Client
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn recovery(
-    State(state): State<AppState>,
-    MeSetup(me): MeSetup,
-    ClientIp(ip): ClientIp,
-) -> ApiResult<Json<Value>> {
+async fn recovery(State(state): State<AppState>, me: Me, ClientIp(ip): ClientIp) -> ApiResult<Json<Value>> {
     me.require_fresh()?;
     let codes = new_recovery_codes(&state, &me.person.id).await?;
     audit(&state, "recovery_codes_made", Some(&me.person.id), Some(&me.person.id), None, &ip, json!({})).await;
