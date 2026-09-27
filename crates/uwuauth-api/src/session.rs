@@ -229,13 +229,20 @@ impl Me {
 }
 
 async fn signed_in(parts: &Parts, state: &AppState) -> ApiResult<Me> {
-    let token = cookie(&parts.headers, SESSION_COOKIE).ok_or_else(ApiError::unauthorized)?;
+    let ip = client_ip(parts, state.config.trust_forwarded);
+    from_headers(state, &parts.headers, ip).await?.ok_or_else(ApiError::unauthorized)
+}
+
+/// The signed-in person of a request, if there is one — restricted or not. For pages that do
+/// something else when nobody is signed in, like `/oauth/authorize`.
+pub async fn from_headers(state: &AppState, headers: &HeaderMap, ip: IpAddr) -> ApiResult<Option<Me>> {
+    let Some(token) = cookie(headers, SESSION_COOKIE) else { return Ok(None) };
     let id = sha256(token.as_bytes());
-    let session = state.store.session(&id).await?.ok_or_else(ApiError::unauthorized)?;
-    let person = state.store.person(&session.person_id).await?.ok_or_else(ApiError::unauthorized)?;
+    let Some(session) = state.store.session(&id).await? else { return Ok(None) };
+    let Some(person) = state.store.person(&session.person_id).await? else { return Ok(None) };
     if !person.active() || person.security_stamp != session.stamp {
         state.store.end_session(&id).await?;
-        return Err(ApiError::unauthorized());
+        return Ok(None);
     }
     // Seen again: at most once a minute, the row is written.
     let stale =
@@ -247,11 +254,10 @@ async fn signed_in(parts: &Parts, state: &AppState) -> ApiResult<Me> {
         } else {
             i64::from(settings.session_hours) * 3600
         };
-        let ip = client_ip(parts, state.config.trust_forwarded).to_string();
-        state.store.touch_session(&id, &ip, &clock::in_seconds(lasts)).await?;
+        state.store.touch_session(&id, &ip.to_string(), &clock::in_seconds(lasts)).await?;
     }
     let admin = state.store.admin_ids().await?.contains(&person.id);
-    Ok(Me { person, session, admin })
+    Ok(Some(Me { person, session, admin }))
 }
 
 impl FromRequestParts<AppState> for Me {
@@ -339,8 +345,11 @@ impl FromRequestParts<AppState> for AdminOnly {
 /// lock, for browsers and paths where that is not enough.
 pub(crate) async fn csrf(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let unsafe_method = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    // The protocol endpoints under /oauth take forms from apps and browsers of other sites by
+    // design, and do nothing with the cookie but look who is signed in.
+    let api = request.uri().path().starts_with("/uwu/");
     let headers = request.headers();
-    if unsafe_method && cookie(headers, SESSION_COOKIE).is_some() && bearer(headers).is_none() {
+    if api && unsafe_method && cookie(headers, SESSION_COOKIE).is_some() && bearer(headers).is_none() {
         let origin = headers.get("origin").and_then(|value| value.to_str().ok());
         let same_site = headers.get("sec-fetch-site").and_then(|value| value.to_str().ok()) == Some("same-origin");
         let ours = match origin {

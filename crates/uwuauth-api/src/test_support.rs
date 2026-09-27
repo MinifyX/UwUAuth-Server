@@ -37,6 +37,7 @@ impl TestServer {
         config.hash_cost = HashCost::cheap();
         config.hibp_url = "http://127.0.0.1:9".into();
         config.start_settings = Settings { setup_done: true, ..Settings::default() };
+        config.fixed_rsa_key = Some(crate::oidc::keys::test_rsa_key());
         change(&mut config);
         let mut state = AppState::new(store, config, "0.0.0-test", LogBuffer::new(100)).await.unwrap();
         state.mailer = Mailer::capturing();

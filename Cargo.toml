@@ -46,6 +46,11 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 # Signing tokens, sealing secrets, hashing, random numbers and TOTP: the crypto rustls brings
 # along anyway.
 ring = "0.17"
+# Only to make the RSA key for RS256 once: `ring` signs with it, but cannot make one. Every
+# signature is `ring`'s, so the `rsa` crate's timing issue with private-key operations
+# (RUSTSEC-2023-0071) never meets anything an attacker can time.
+rsa = { version = "0.9", default-features = false, features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 # Bundled SQLite, so the server never depends on whichever libsqlite3 is around.
 rusqlite = { version = "0.40", features = ["bundled"] }
 # `ring` rather than aws-lc: it needs no C toolchain beyond a compiler, which keeps the arm64
@@ -64,6 +69,8 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "set-header", "limit", "timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Redirect addresses of apps, taken apart and put together with the answer.
+url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 webpki-roots = "1"
 
@@ -87,6 +94,13 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.blake2]
+opt-level = 3
+
+# Making an RSA key takes a while unoptimised; the server does it once, tests with a fixed key.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
+[profile.dev.package.rsa]
 opt-level = 3
 
 [profile.release]

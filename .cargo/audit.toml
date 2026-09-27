@@ -1,0 +1,11 @@
+# What `cargo audit` lets pass, and why.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071, "Marvin": a timing side channel in the `rsa` crate's private-key
+    # operations, with no fixed release yet. UwUAuth uses `rsa` for one thing only: making the
+    # RS256 signing key, once, the first time an app signs in. Every signature — and there is no
+    # decryption at all — is made by `ring`, whose RSA is constant-time. So nothing an attacker
+    # can time ever runs through `rsa`. Look again when `rsa` 0.10 is out.
+    "RUSTSEC-2023-0071",
+]

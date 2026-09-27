@@ -18,6 +18,7 @@ mod info;
 pub mod limits;
 mod logs;
 pub mod memory;
+pub mod oidc;
 pub mod policy;
 pub mod routes;
 pub mod session;
@@ -65,6 +66,8 @@ pub struct ApiConfig {
     pub login_attempts: u32,
     /// Where a new server starts, until an admin saves settings.
     pub start_settings: Settings,
+    /// An RSA key to sign with instead of making one (tests: making one takes a while).
+    pub fixed_rsa_key: Option<Vec<u8>>,
 }
 
 impl ApiConfig {
@@ -79,6 +82,7 @@ impl ApiConfig {
             hibp_url: "https://api.pwnedpasswords.com".into(),
             login_attempts: 10,
             start_settings: Settings::default(),
+            fixed_rsa_key: None,
         }
     }
 }
@@ -115,6 +119,8 @@ pub struct AppState {
     /// Who WebAuthn is for: this server's host and origin.
     pub party: webauthn::Party,
     pub memory: Arc<memory::Memory>,
+    /// The keys tokens are signed with, made on first use.
+    pub keys: Arc<tokio::sync::OnceCell<oidc::keys::Keys>>,
 }
 
 impl AppState {
@@ -144,6 +150,7 @@ impl AppState {
             limits,
             party,
             memory: Arc::default(),
+            keys: Arc::default(),
         })
     }
 
@@ -195,6 +202,7 @@ pub fn router(state: AppState) -> Router {
         .merge(info::routes())
         .merge(settings::routes())
         .merge(routes::routes())
+        .merge(oidc::routes())
         .merge(web::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .merge(imports)

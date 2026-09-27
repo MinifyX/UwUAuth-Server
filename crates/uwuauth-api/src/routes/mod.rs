@@ -9,6 +9,7 @@
 //!   and export.
 
 pub mod admin;
+pub mod apps;
 pub mod groups;
 pub mod invitations;
 pub mod links;
@@ -34,6 +35,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .merge(groups::routes())
         .merge(invitations::routes())
         .merge(admin::routes())
+        .merge(apps::routes())
         .merge(crate::tokens::routes())
 }
 

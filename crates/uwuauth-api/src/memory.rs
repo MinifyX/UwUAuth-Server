@@ -35,6 +35,15 @@ impl<V> Expiring<V> {
 }
 
 impl<V: Clone> Expiring<V> {
+    /// The first value `matches` takes, with its key, left where it is.
+    pub fn find(&self, matches: impl Fn(&V) -> bool) -> Option<(String, V)> {
+        let entries = self.entries.lock();
+        entries
+            .iter()
+            .find(|(_, (value, at))| at.elapsed() < self.ttl && matches(value))
+            .map(|(key, (value, _))| (key.clone(), value.clone()))
+    }
+
     /// The value under `key`, left where it is.
     pub fn peek(&self, key: &str) -> Option<V> {
         let entries = self.entries.lock();
@@ -59,6 +68,8 @@ pub struct Memory {
     pub pending: Expiring<PendingLogin>,
     /// Authenticator app secrets being set up, by person, until the first code confirms them.
     pub totp_setup: Expiring<Vec<u8>>,
+    /// Sign-ins to apps in progress: codes, consent, devices, sign-outs.
+    pub oidc: crate::oidc::Pending,
 }
 
 impl Default for Memory {
@@ -67,6 +78,7 @@ impl Default for Memory {
             challenges: Expiring::new(Duration::from_secs(crate::webauthn::CHALLENGE_SECONDS)),
             pending: Expiring::new(Duration::from_secs(5 * 60)),
             totp_setup: Expiring::new(Duration::from_secs(15 * 60)),
+            oidc: crate::oidc::Pending::default(),
         }
     }
 }
