@@ -8,8 +8,8 @@
 # nextcloud: Nextcloud finds people over LDAP, and signs one in with OpenID Connect (user_oidc,
 #            from Nextcloud's app store: needs the internet). Slow; not part of `all`.
 set -euo pipefail
-cd "$(dirname "$0")"
 binary="$(realpath "${1:?the uwuauth-server binary}")"
+cd "$(dirname "$0")"
 what="${2:-all}"
 root="$(realpath ../..)"
 work="$(mktemp -d)"
