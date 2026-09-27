@@ -1,0 +1,58 @@
+# UwUAuth Server
+#
+# install.sh sets all of this up for you. By hand it is:
+#
+#   1. install -m 0600 .env.example .env   and set UWUAUTH_PUBLIC and UWUAUTH_TLS
+#   2. docker compose up -d
+#   3. docker compose ps      until it says healthy
+#
+# The next version: update.sh, next to this file. Everything that differs from one machine to
+# the next lives in .env, so update.sh can put the next version's compose.yaml here.
+#
+# The whole story, with Let's Encrypt, a reverse proxy, backups and updates: docs/deployment.md.
+
+name: uwuauth
+
+services:
+  uwuauth:
+    image: ghcr.io/minifyx/uwuauth-server:${UWUAUTH_VERSION:-latest}
+    container_name: uwuauth
+    restart: unless-stopped
+    environment:
+      UWUAUTH_PUBLIC: ${UWUAUTH_PUBLIC:?set UWUAUTH_PUBLIC in .env}
+      # No default: without it, the server would speak plain HTTP on port 443 to anybody.
+      UWUAUTH_TLS: ${UWUAUTH_TLS:?set UWUAUTH_TLS in .env}
+      UWUAUTH_ACME_EMAIL: ${UWUAUTH_ACME_EMAIL:-}
+      UWUAUTH_ACME_DIRECTORY: ${UWUAUTH_ACME_DIRECTORY:-letsencrypt}
+      UWUAUTH_TRUST_FORWARDED: ${UWUAUTH_TRUST_FORWARDED:-off}
+      UWUAUTH_UPDATE_CHECK: ${UWUAUTH_UPDATE_CHECK:-on}
+      # What counts as an update is what this machine follows.
+      UWUAUTH_CHANNEL: ${UWUAUTH_VERSION:-latest}
+    ports:
+      # Web app, and later OpenID Connect, SAML, SCIM and forward auth: TLS of its own, or plain
+      # HTTP for a proxy. LDAP (389/636) and RADIUS (1812/1813 udp) join here in their stages.
+      - "${UWUAUTH_BIND:-443}:8443"
+    volumes:
+      - uwuauth-data:/data
+    stop_grace_period: 10s
+    # Docker keeps a container's log for ever unless told otherwise. Thirty megabytes, then the
+    # oldest goes.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Hardening: the server runs as an unprivileged user (uid 10001) on a read-only root file
+    # system; only the data volume and a small /tmp are writable. It listens above 1024, so it
+    # keeps no Linux capability at all.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  uwuauth-data:
+    name: uwuauth_uwuauth-data

@@ -1,0 +1,21 @@
+[package]
+name = "uwuauth-store"
+description = "UwUAuth Server's database: SQLite today, behind methods that a PostgreSQL backend can implement later"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libc.workspace = true
+parking_lot.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "uwuauth-api"
+description = "UwUAuth Server's HTTP side: its own API under /uwu, the protocols that speak HTTP, the web app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+uwuauth-store.workspace = true
+uwuauth-web.workspace = true
+
+axum.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+tower.workspace = true

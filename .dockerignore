@@ -1,0 +1,16 @@
+target
+data
+.git
+.github
+docs
+*.md
+web/node_modules
+web/dist
+# Secrets never go into a build, not even into a stage that is thrown away: its cache keeps them.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx

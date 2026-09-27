@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none" stroke="currentColor" role="img" aria-label="Nyu, the UwUAuth ID badge cat">
+  <title>Nyu (mono)</title>
+  <!-- One colour, outlines only: the clip, the badge, the photo as a face, the name. -->
+  <g stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="128" cy="34" r="11" stroke-width="7"/>
+    <path d="M116 74 V52 A8 8 0 0 1 124 44 H132 A8 8 0 0 1 140 52 V74"/>
+    <path d="M62 88 L80 36 L114 88"/>
+    <path d="M142 88 L176 36 L194 88"/>
+    <rect x="34" y="74" width="188" height="164" rx="24"/>
+    <rect x="50" y="102" width="156" height="86" rx="16"/>
+  </g>
+  <g stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M88 128 Q102 146 116 128"/>
+    <path d="M140 128 Q154 146 168 128"/>
+    <path d="M112 156 q8 13 16 0 q8 13 16 0"/>
+    <path d="M60 206 H152"/>
+    <path d="M60 222 H116"/>
+    <circle cx="190" cy="212" r="14" stroke-width="7"/>
+    <path d="M184 212 L188.5 216.5 L196 208" stroke-width="6"/>
+  </g>
+</svg>

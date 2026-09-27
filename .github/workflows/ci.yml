@@ -1,0 +1,456 @@
+name: CI
+
+# Tests, the scripts and the container image on every push that changes code; documentation-only
+# pushes skip it. A `v…` tag also publishes: the image with its tags, and a GitHub release with
+# install.sh, update.sh, compose.yaml and env.example, each with its checksum.
+#
+# The jobs run side by side where they can: the server's tests, the web app, the scripts, the
+# audit. The binaries wait for the web app, which goes into them; the install test waits for the
+# binaries, and the image is packaged from those same binaries — nothing is built twice.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/minifyx/uwuauth-server
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # A release is built from nothing any earlier run left behind.
+        if: github.ref_type != 'tag'
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --all-targets --locked
+
+  acme:
+    name: Certificate from an ACME CA
+    runs-on: ubuntu-latest
+    services:
+      # Let's Encrypt's test CA. It takes every challenge as passed, so the server needs no
+      # port 443 for it; what is tested is everything else — account, order, certificate, serving.
+      pebble:
+        image: ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+        env:
+          PEBBLE_VA_ALWAYS_VALID: "1"
+          # No random pause before each validation: it only makes the test slow and flaky.
+          PEBBLE_VA_NOSLEEP: "1"
+        ports:
+          - 14000:14000
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # A release is built from nothing any earlier run left behind.
+        if: github.ref_type != 'tag'
+      - name: The CA certificate Pebble's own HTTPS uses
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/pebble.minica.pem" \
+            https://raw.githubusercontent.com/letsencrypt/pebble/v2.10.1/test/certs/pebble.minica.pem
+      - name: Get a certificate and serve it
+        env:
+          UWUAUTH_TEST_PEBBLE: https://localhost:14000/dir
+        run: |
+          UWUAUTH_TEST_PEBBLE_CA="$RUNNER_TEMP/pebble.minica.pem" \
+            cargo test --locked -p uwuauth-server --test integration -- --ignored a_certificate_from_an_acme_ca
+
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Everything anybody is told to run with bash, checked before anybody runs it
+        run: |
+          for script in install.sh update.sh; do bash -n "$script"; done
+          shellcheck --severity=warning install.sh update.sh
+          for script in web/scripts/*.mjs; do node --check "$script"; done
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: A tag matches the version in Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # Checked before anything is published: a binary that reports another version than its
+          # tag would confuse update.sh's way back and the server's own look for updates.
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$cargo_version" != "$tag_version" ]; then
+            echo "Cargo.toml says $cargo_version but the tag is $tag_version" >&2
+            exit 1
+          fi
+      - name: CHANGELOG.md has a section for it
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: grep -qx "## ${GITHUB_REF_NAME#v}" CHANGELOG.md
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # A release is built from nothing any earlier run left behind.
+        if: github.ref_type != 'tag'
+      # Known vulnerabilities fail the job; "unmaintained" notices only show up in the log.
+      - run: cargo audit --version || cargo install cargo-audit --locked
+      - run: cargo audit
+
+  web:
+    name: Web app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: ${{ github.ref_type != 'tag' && 'pnpm' || '' }}
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: The build is there, compressed
+        run: test -f dist/index.html.br
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 3
+
+  binaries:
+    name: Binaries
+    needs: [test, scripts, web]
+    runs-on: ubuntu-latest
+    env:
+      # The server knows its commit and, for a release, checks for newer releases instead of
+      # newer commits.
+      UWUAUTH_GIT_SHA: ${{ github.sha }}
+      UWUAUTH_RELEASE: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # The web app goes into the binary (crates/uwuauth-web/build.rs).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
+      - name: Cross compiler for arm64
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # A release is built from nothing any earlier run left behind.
+        if: github.ref_type != 'tag'
+        with:
+          key: release
+      - name: Build amd64
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu -p uwuauth-server
+      - name: Build arm64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: cargo build --release --locked --target aarch64-unknown-linux-gnu -p uwuauth-server
+      - name: Collect them
+        run: |
+          mkdir -p dist/amd64 dist/arm64
+          cp target/x86_64-unknown-linux-gnu/release/uwuauth-server dist/amd64/
+          cp target/aarch64-unknown-linux-gnu/release/uwuauth-server dist/arm64/
+          dist/amd64/uwuauth-server --version
+          file dist/arm64/uwuauth-server | grep -q aarch64
+          # Both carry the web app: a binary without it would serve and simply have none.
+          for arch in amd64 arm64; do grep -q 'assets/index-.*\.js' "dist/$arch/uwuauth-server"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binaries
+          path: dist
+          retention-days: 3
+
+  install:
+    name: Install and update
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: binaries
+          path: dist
+      - name: Three versions, only on this machine
+        run: |
+          chmod +x dist/*/uwuauth-server
+          # Two of the same build under two version numbers, and one that never comes up.
+          docker build -q -f docker/Dockerfile.release \
+            --label org.opencontainers.image.version=0.0.1 -t "$IMAGE:0.0.1" .
+          docker build -q -f docker/Dockerfile.release \
+            --label org.opencontainers.image.version=0.0.2 -t "$IMAGE:0.0.2" .
+          printf 'FROM %s\nCMD ["no-such-command"]\n' "$IMAGE:0.0.1" |
+            docker build -q --label org.opencontainers.image.version=0.0.3 -t "$IMAGE:0.0.3" -
+      - name: Install, behind a proxy
+        run: |
+          # On a server /opt is root's alone; on the runner anybody may write there, which
+          # update.sh rightly refuses to trust.
+          sudo chown root:root /opt
+          sudo chmod 755 /opt
+          sudo bash install.sh --yes --no-pull --from-checkout --version 0.0.1 \
+            --behind-proxy https://auth.example.com | tee install.log
+          test "$(sudo stat -c %a /opt/uwuauth/.env)" = 600
+          sudo grep -qx 'UWUAUTH_PUBLIC=https://auth.example.com' /opt/uwuauth/.env
+          sudo grep -qx 'UWUAUTH_TLS=off' /opt/uwuauth/.env
+          sudo grep -qx 'UWUAUTH_BIND=127.0.0.1:8443' /opt/uwuauth/.env
+          sudo grep -qx 'UWUAUTH_TRUST_FORWARDED=on' /opt/uwuauth/.env
+          grep -q 'Address       https://auth.example.com' install.log
+          curl -sf http://127.0.0.1:8443/healthz | jq -e '.ok == true'
+          curl -sf http://127.0.0.1:8443/alive
+          # Only on loopback, where nothing but the proxy reaches it.
+          address=$(hostname -I | awk '{ print $1 }')
+          if curl -s --max-time 3 "http://$address:8443/alive"; then
+            echo "the server answers on $address, past the proxy" >&2
+            exit 1
+          fi
+      - name: It stops when it is told to
+        run: |
+          # SIGTERM, not ten seconds of waiting and then SIGKILL.
+          start=$(date +%s)
+          sudo docker stop uwuauth
+          test $(( $(date +%s) - start )) -lt 8
+          sudo docker start uwuauth
+      - name: Update, with a backup first
+        run: |
+          cd /opt/uwuauth
+          sudo bash update.sh --yes --no-pull --no-self-update --keep-compose --version 0.0.2
+          label='{{index .Config.Labels "org.opencontainers.image.version"}}'
+          test "$(sudo docker inspect uwuauth --format "$label")" = 0.0.2
+          test "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy
+          sudo docker compose cp uwuauth:/data/backups "$RUNNER_TEMP/backups"
+          sudo ls "$RUNNER_TEMP/backups" | grep -qE '^uwuauth-[0-9-]+\.db$'
+      - name: A version that does not come up puts the one before back
+        run: |
+          cd /opt/uwuauth
+          if sudo bash update.sh --yes --no-pull --no-self-update --version 0.0.3; then
+            echo "update.sh should have given up on 0.0.3" >&2
+            exit 1
+          fi
+          sudo grep -qx 'UWUAUTH_VERSION=0.0.2' .env
+          for _ in $(seq 1 30); do
+            [ "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy ] && break
+            sleep 2
+          done
+          label='{{index .Config.Labels "org.opencontainers.image.version"}}'
+          test "$(sudo docker inspect uwuauth --format "$label")" = 0.0.2
+          test "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy
+      - name: A backup goes back, but not under a running server
+        run: |
+          cd /opt/uwuauth
+          name=$(sudo docker compose run --rm -T uwuauth restore | head -1 | cut -d' ' -f1)
+          echo "restoring $name"
+          if sudo docker compose run --rm -T uwuauth restore "$name"; then
+            echo "a restore under a running server should have been refused" >&2
+            exit 1
+          fi
+          sudo docker compose stop
+          sudo docker compose run --rm -T uwuauth restore "$name" | tee "$RUNNER_TEMP/restore.log"
+          grep -q 'Restored from' "$RUNNER_TEMP/restore.log"
+          sudo docker compose up -d
+          for _ in $(seq 1 30); do
+            [ "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy ] && break
+            sleep 2
+          done
+          test "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy
+      - name: Install again, next to a proxy in a container
+        run: |
+          (cd /opt/uwuauth && sudo docker compose down -v)
+          sudo rm -rf /opt/uwuauth
+          sudo docker network create --subnet 198.51.100.0/24 proxy-test
+          sudo bash install.sh --yes --no-pull --from-checkout --version 0.0.1 \
+            --behind-proxy https://auth.example.com \
+            --proxy-network proxy-test --proxy-ip 198.51.100.10 | tee install.log
+          grep -q 'reverse_proxy http://198.51.100.10:8443' install.log
+          # In the proxy's network, by address and by name, and on no port of this machine.
+          sudo docker run --rm --network proxy-test alpine:3 wget -qO- http://198.51.100.10:8443/alive
+          sudo docker run --rm --network proxy-test alpine:3 wget -qO- http://uwuauth:8443/alive
+          test -z "$(sudo docker port uwuauth)"
+          # update.sh takes the override along.
+          cd /opt/uwuauth
+          sudo bash update.sh --yes --no-pull --no-self-update --keep-compose --version 0.0.2
+          test "$(sudo docker inspect uwuauth --format '{{.State.Health.Status}}')" = healthy
+          sudo docker run --rm --network proxy-test alpine:3 wget -qO- http://198.51.100.10:8443/alive
+      - name: What the server said
+        if: always()
+        run: cd /opt/uwuauth && sudo docker compose logs --no-color || true
+
+  image:
+    name: Container image
+    if: github.event_name != 'pull_request'
+    needs: [test, acme, scripts, audit, web, install, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # This job can push images. Nothing here needs git credentials afterwards, so none are
+          # left lying in .git/config.
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: binaries
+          path: dist
+      - run: chmod +x dist/*/uwuauth-server
+      # No QEMU: the only stage that runs anything runs on the machine that builds.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=edge,enable={{is_default_branch}}
+            # Every release, stable or not; stable ones also get latest.
+            type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      # The amd64 image into the local daemon first, and scanned, so a known-vulnerable image is
+      # never pushed. The multi-arch push below reuses the same build cache.
+      - name: Build for scanning
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: docker/Dockerfile.release
+          platforms: linux/amd64
+          load: true
+          tags: uwuauth-server:scan
+          cache-from: ${{ github.ref_type != 'tag' && 'type=gha' || '' }}
+          cache-to: ${{ github.ref_type != 'tag' && 'type=gha,mode=max' || '' }}
+      - name: Install Trivy
+        env:
+          VERSION: "0.74.0"
+          SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v$VERSION/trivy_${VERSION}_Linux-64bit.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+      - name: Scan the image
+        run: |
+          # Fail only on vulnerabilities that have a fix available; log the rest.
+          "$RUNNER_TEMP/trivy" image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --no-progress uwuauth-server:scan
+      - name: Check the image starts, before it goes anywhere
+        run: docker run --rm uwuauth-server:scan --version
+      - name: Push the image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: docker/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: ${{ github.ref_type != 'tag' && 'type=gha' || '' }}
+          cache-to: ${{ github.ref_type != 'tag' && 'type=gha,mode=max' || '' }}
+      - name: Check what was pushed starts too
+        run: docker run --rm "${IMAGE}:sha-${GITHUB_SHA::7}" --version
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Package the files people download
+        run: |
+          # install.sh and update.sh check what they fetch, so everything they fetch needs a sum.
+          mkdir -p release
+          cp .env.example release/env.example
+          for file in install.sh update.sh compose.yaml; do cp "$file" release/; done
+          for file in install.sh update.sh compose.yaml env.example; do
+            (cd release && sha256sum "$file" > "$file.sha256")
+          done
+          chmod +x release/install.sh release/update.sh
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## ${version}" '
+            $0 == heading || index($0, heading " ") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for ${version}" >&2
+            exit 1
+          fi
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" $flags --title "UwUAuth Server ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            release/install.sh release/install.sh.sha256 \
+            release/update.sh release/update.sh.sha256 \
+            release/compose.yaml release/compose.yaml.sha256 \
+            release/env.example release/env.example.sha256

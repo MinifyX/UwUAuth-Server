@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Nyu, the UwUAuth ID badge cat">
+  <title>Nyu</title>
+  <!--
+    Nyu's hull for UwUAuth: an ID badge. The lanyard clip comes down between
+    the ears, the photo on the badge is her face (same place as UwULock's
+    plate, UwUSSH's terminal and UwURDP's screen, so every mood fits), and
+    below it her name, with a golden seal: verified.
+  -->
+
+  <!-- die-cut white edge -->
+  <g fill="#FFFFFF" stroke="#FFFFFF" stroke-width="20" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="128" cy="34" r="12"/>
+    <rect x="115" y="40" width="26" height="50" rx="8"/>
+    <path d="M62 88 L80 36 L114 88 Z"/>
+    <path d="M142 88 L176 36 L194 88 Z"/>
+    <rect x="34" y="74" width="188" height="164" rx="24"/>
+  </g>
+
+  <!-- lanyard ring and clip, behind the ears -->
+  <circle cx="128" cy="34" r="12" fill="none" stroke="#4B1D3F" stroke-width="7"/>
+  <rect x="115" y="40" width="26" height="50" rx="8" fill="#C9B6F0" stroke="#4B1D3F" stroke-width="8" stroke-linejoin="round"/>
+
+  <!-- ears -->
+  <g stroke="#4B1D3F" stroke-width="9" stroke-linejoin="round">
+    <path d="M62 88 L80 36 L114 88 Z" fill="#FF6FA6"/>
+    <path d="M142 88 L176 36 L194 88 Z" fill="#FF6FA6"/>
+  </g>
+  <path d="M76 82 L84 52 L100 82 Z" fill="#FFB8D3"/>
+  <path d="M156 82 L172 52 L180 82 Z" fill="#FFB8D3"/>
+
+  <!-- badge -->
+  <rect x="34" y="74" width="188" height="164" rx="24" fill="#FF6FA6" stroke="#4B1D3F" stroke-width="9"/>
+
+  <!-- slot the clip goes through -->
+  <rect x="110" y="84" width="36" height="9" rx="4.5" fill="#4B1D3F"/>
+
+  <!-- photo = face -->
+  <rect x="50" y="102" width="156" height="86" rx="16" fill="#FFB8D3" stroke="#4B1D3F" stroke-width="7"/>
+
+  <ellipse cx="78" cy="154" rx="12" ry="7.5" fill="#FF4D8D" opacity="0.5"/>
+  <ellipse cx="178" cy="154" rx="12" ry="7.5" fill="#FF4D8D" opacity="0.5"/>
+
+  <g fill="none" stroke="#4B1D3F" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M88 128 Q102 146 116 128"/>
+    <path d="M140 128 Q154 146 168 128"/>
+    <path d="M112 156 q8 13 16 0 q8 13 16 0"/>
+  </g>
+
+  <!-- name lines -->
+  <rect x="54" y="200" width="104" height="11" rx="5.5" fill="#4B1D3F"/>
+  <rect x="54" y="218" width="68" height="8" rx="4" fill="#FFB8D3"/>
+
+  <!-- verified seal -->
+  <circle cx="190" cy="212" r="15" fill="#FFD66E" stroke="#4B1D3F" stroke-width="6"/>
+  <path d="M183 212 L188.5 217.5 L198 207" fill="none" stroke="#4B1D3F" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
