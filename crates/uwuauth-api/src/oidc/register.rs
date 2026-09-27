@@ -4,7 +4,7 @@
 
 use super::{oauth_error, open_to_all};
 use crate::crypto::sha256;
-use crate::routes::apps::{NewApp, check_uri, make};
+use crate::routes::apps::{NewApp, check_new, check_uri, make};
 use crate::{AppState, audit};
 use axum::Json;
 use axum::body::Bytes;
@@ -29,7 +29,23 @@ struct Registration {
     scope: Option<String>,
 }
 
-pub async fn register(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+/// What marks an app that registered itself: it asks people before it gets their data, it is not
+/// in anybody's "My apps", and its back-channel address has to be a public one.
+pub const REGISTERED: &str = "registered";
+
+pub async fn register(
+    State(state): State<AppState>,
+    crate::session::ClientIp(ip): crate::session::ClientIp,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !state.limits.oauth.check(ip) {
+        return oauth_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "temporarily_unavailable",
+            "too many requests, wait a moment",
+        );
+    }
     let Some(token) = crate::session::bearer(&headers) else {
         return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token", "registering needs a token from an admin");
     };
@@ -53,6 +69,20 @@ pub async fn register(State(state): State<AppState>, headers: HeaderMap, body: B
             return oauth_error(StatusCode::BAD_REQUEST, "invalid_redirect_uri", &message);
         }
     }
+    if let Some(uri) = request.backchannel_logout_uri.as_deref().filter(|uri| !uri.is_empty()) {
+        let literal_private = url::Url::parse(uri)
+            .ok()
+            .and_then(|url| url.host_str().map(|host| host.trim_start_matches('[').trim_end_matches(']').to_string()))
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_some_and(|ip| !super::logout::public_ip(ip));
+        if !uri.starts_with("https://") || check_uri(uri).is_err() || literal_private {
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_client_metadata",
+                "backchannel_logout_uri has to be a public https address",
+            );
+        }
+    }
     if grants.iter().any(|grant| grant == "authorization_code") && request.redirect_uris.is_empty() {
         return oauth_error(StatusCode::BAD_REQUEST, "invalid_redirect_uri", "at least one redirect_uri is needed");
     }
@@ -62,6 +92,25 @@ pub async fn register(State(state): State<AppState>, headers: HeaderMap, body: B
         Some("none") => "none",
         _ => "client_secret_basic",
     };
+    let mut new = NewApp {
+        name: request.client_name.clone().unwrap_or_default(),
+        template: Some(REGISTERED.into()),
+        redirect_uris: request.redirect_uris.clone(),
+        post_logout_redirect_uris: request.post_logout_redirect_uris.clone(),
+        backchannel_logout_uri: request.backchannel_logout_uri.clone(),
+        grant_types: Some(grants.clone()),
+        public,
+        token_auth_method: Some(method.into()),
+        id_token_alg: request.id_token_signed_response_alg.clone(),
+        // Whoever has a registration token is not somebody everybody trusts: people agree
+        // before such an app gets their data, and it is not in their "My apps".
+        consent: true,
+        launch_url: None,
+        ..NewApp::default()
+    };
+    if let Err(error) = check_new(&state, &new).await {
+        return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", &error.message);
+    }
     // The token counts only now that the request is good: a bad request does not use it up.
     let Ok(Some(used)) = state.store.use_registration_token(&sha256(token.as_bytes())).await else {
         return oauth_error(
@@ -70,23 +119,13 @@ pub async fn register(State(state): State<AppState>, headers: HeaderMap, body: B
             "the registration token is unknown, used up or ran out",
         );
     };
-    let new = NewApp {
-        name: request.client_name.clone().unwrap_or_else(|| used.name.clone()),
-        redirect_uris: request.redirect_uris.clone(),
-        post_logout_redirect_uris: request.post_logout_redirect_uris.clone(),
-        backchannel_logout_uri: request.backchannel_logout_uri.clone(),
-        grant_types: Some(grants.clone()),
-        public,
-        token_auth_method: Some(method.into()),
-        id_token_alg: request.id_token_signed_response_alg.clone(),
-        launch_url: request.client_uri.clone(),
-        ..NewApp::default()
-    };
+    if new.name.trim().is_empty() {
+        new.name = used.name.clone();
+    }
     let (app, secret) = match make(&state, new, used.created_by.as_deref()).await {
         Ok(made) => made,
         Err(error) => return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", &error.message),
     };
-    let ip: std::net::IpAddr = [0, 0, 0, 0].into();
     audit(
         &state,
         "app_registered",

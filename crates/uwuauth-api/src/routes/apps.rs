@@ -113,6 +113,11 @@ fn client_id(name: &str) -> String {
     if slug.is_empty() { format!("app-{suffix}") } else { format!("{slug}-{suffix}") }
 }
 
+/// Check what a new app is made of, without keeping it.
+pub async fn check_new(state: &AppState, new: &NewApp) -> ApiResult<()> {
+    fields(state, App::default(), new.clone()).await.map(drop)
+}
+
 /// Check what an app is made of and keep it. Its secret, if it has one, comes back once.
 pub async fn make(state: &AppState, new: NewApp, created_by: Option<&str>) -> ApiResult<(App, Option<String>)> {
     let template = new.template.as_deref().and_then(templates::find);
@@ -148,7 +153,9 @@ pub async fn make(state: &AppState, new: NewApp, created_by: Option<&str>) -> Ap
     let app = App {
         client_id: client_id(&name),
         name,
-        template: template.map(|template| template.key.to_string()),
+        template: template
+            .map(|template| template.key.to_string())
+            .or_else(|| new.template.clone().filter(|key| key == crate::oidc::register::REGISTERED)),
         secret_hash: secret.as_ref().map(|secret| sha256(secret.as_bytes())),
         token_auth_method: if new.public { "none".into() } else { app.token_auth_method },
         created_by: created_by.map(str::to_string),

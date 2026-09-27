@@ -124,6 +124,9 @@ pub struct Limits {
     pub second_factor: Limiter<String>,
     /// Mails anybody can make the server send, per address they go to.
     pub mail: Limiter<String>,
+    /// OAuth's endpoints for apps (token, device authorization, registration), per address: apps
+    /// refresh often, but not thousands of times a second.
+    pub oauth: Limiter,
 }
 
 impl Default for Limits {
@@ -134,6 +137,7 @@ impl Default for Limits {
             anonymous: Limiter::new(50, Duration::from_secs(60)),
             second_factor: Limiter::new(10, Duration::from_secs(60)),
             mail: Limiter::new(5, Duration::from_secs(5 * 60)),
+            oauth: Limiter::new(600, Duration::from_millis(100)),
         }
     }
 }
@@ -155,6 +159,7 @@ impl Limits {
             anonymous: generous(),
             second_factor: generous(),
             mail: generous(),
+            oauth: generous(),
         }
     }
 }

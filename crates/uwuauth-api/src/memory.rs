@@ -7,6 +7,10 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+/// At most this many live values per map: past that, new ones are refused rather than let an
+/// attacker fill the memory.
+pub const MOST: usize = 10_000;
+
 /// Values by key that are taken once and run out after `ttl`.
 pub struct Expiring<V> {
     ttl: Duration,
@@ -18,13 +22,18 @@ impl<V> Expiring<V> {
         Expiring { ttl, entries: Mutex::new(HashMap::new()) }
     }
 
-    pub fn put(&self, key: String, value: V) {
+    /// Keep `value` under `key`. False when the map is full of live values and this is a new key.
+    pub fn put(&self, key: String, value: V) -> bool {
         let mut entries = self.entries.lock();
         let now = Instant::now();
-        if entries.len() > 10_000 {
+        if entries.len() >= MOST && !entries.contains_key(&key) {
             entries.retain(|_, (_, at)| now.duration_since(*at) < self.ttl);
+            if entries.len() >= MOST {
+                return false;
+            }
         }
         entries.insert(key, (value, now));
+        true
     }
 
     /// The value under `key`, once: whatever happens next, it is gone.
@@ -97,5 +106,15 @@ mod tests {
         let gone = Expiring::new(Duration::ZERO);
         gone.put("b".into(), 2);
         assert_eq!(gone.take("b"), None);
+    }
+
+    #[test]
+    fn a_full_map_refuses_newcomers() {
+        let map = Expiring::new(Duration::from_secs(60));
+        for n in 0..MOST {
+            assert!(map.put(n.to_string(), n));
+        }
+        assert!(!map.put("one more".into(), 0));
+        assert!(map.put("1".into(), 1), "an existing key may still change");
     }
 }
