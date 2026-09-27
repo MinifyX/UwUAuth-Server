@@ -28,9 +28,27 @@ services:
       UWUAUTH_UPDATE_CHECK: ${UWUAUTH_UPDATE_CHECK:-on}
       # What counts as an update is what this machine follows.
       UWUAUTH_CHANNEL: ${UWUAUTH_VERSION:-latest}
+      # Where a new server starts; the admin portal changes them later, in the database.
+      UWUAUTH_LANGUAGE: ${UWUAUTH_LANGUAGE:-}
+      UWUAUTH_TIMEZONE: ${UWUAUTH_TIMEZONE:-}
+      UWUAUTH_SMTP_HOST: ${UWUAUTH_SMTP_HOST:-}
+      UWUAUTH_SMTP_PORT: ${UWUAUTH_SMTP_PORT:-}
+      UWUAUTH_SMTP_SECURITY: ${UWUAUTH_SMTP_SECURITY:-}
+      UWUAUTH_SMTP_USERNAME: ${UWUAUTH_SMTP_USERNAME:-}
+      UWUAUTH_SMTP_PASSWORD: ${UWUAUTH_SMTP_PASSWORD:-}
+      UWUAUTH_SMTP_FROM: ${UWUAUTH_SMTP_FROM:-}
+      UWUAUTH_SMTP_FROM_NAME: ${UWUAUTH_SMTP_FROM_NAME:-}
+      # LDAP: off unless .env turns it on (install.sh --ldap). Its ports on this machine are in
+      # compose.override.yaml.
+      UWUAUTH_LDAP_LISTEN: ${UWUAUTH_LDAP_LISTEN:-}
+      UWUAUTH_LDAPS_LISTEN: ${UWUAUTH_LDAPS_LISTEN:-}
+      UWUAUTH_LDAP_PLAIN_BIND: ${UWUAUTH_LDAP_PLAIN_BIND:-off}
+      UWUAUTH_LDAP_BASE_DN: ${UWUAUTH_LDAP_BASE_DN:-}
+      UWUAUTH_LDAP_TLS_CERT: ${UWUAUTH_LDAP_TLS_CERT:-}
+      UWUAUTH_LDAP_TLS_KEY: ${UWUAUTH_LDAP_TLS_KEY:-}
     ports:
-      # Web app, and later OpenID Connect, SAML, SCIM and forward auth: TLS of its own, or plain
-      # HTTP for a proxy. LDAP (389/636) and RADIUS (1812/1813 udp) join here in their stages.
+      # Web app and OpenID Connect (later SAML, SCIM and forward auth): TLS of its own, or plain
+      # HTTP for a proxy. LDAP's ports, when it is on, are in compose.override.yaml.
       - "${UWUAUTH_BIND:-443}:8443"
     volumes:
       - uwuauth-data:/data

@@ -32,11 +32,55 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(ring::default_provider())
 }
 
+/// Where the TLS configuration for LDAP is: the same certificate as HTTPS, swapped when it is
+/// renewed. Empty when the server has no certificate of its own.
+pub type Slot = Arc<parking_lot::RwLock<Option<Arc<ServerConfig>>>>;
+
+/// How HTTPS is served.
+pub enum Http {
+    Off,
+    Files(RustlsConfig),
+    Acme(Box<rustls_acme::axum::AxumAcceptor>),
+}
+
+/// The certificates, ready for HTTPS and for LDAP.
+pub struct Prepared {
+    pub http: Http,
+    pub ldap: Slot,
+}
+
+/// Load (or start getting) the certificate: once, for every listener.
+pub fn prepare(config: &Config) -> Result<Prepared, String> {
+    let ldap: Slot = Arc::default();
+    let http = match &config.tls {
+        TlsMode::Off => {
+            if let Some((cert, key)) = &config.ldap_cert {
+                *ldap.write() = Some(from_files(cert, key)?);
+                watch_files(None, ldap.clone(), cert.clone(), key.clone());
+            }
+            Http::Off
+        }
+        TlsMode::Files { cert, key } => {
+            let loaded = from_files(cert, key)?;
+            *ldap.write() = Some(loaded.clone());
+            let tls = RustlsConfig::from_config(loaded);
+            watch_files(Some(tls.clone()), ldap.clone(), cert.clone(), key.clone());
+            Http::Files(tls)
+        }
+        TlsMode::Acme(acme) => {
+            let (acceptor, for_ldap) = acme_acceptor(acme, &config.acme_cache())?;
+            *ldap.write() = Some(for_ldap);
+            Http::Acme(Box::new(acceptor))
+        }
+    };
+    Ok(Prepared { http, ldap })
+}
+
 /// Serve `app` on `listener` until `handle` says stop.
 pub async fn serve(
     listener: std::net::TcpListener,
     app: Router,
-    config: &Config,
+    http: Http,
     handle: Handle<SocketAddr>,
 ) -> Result<(), String> {
     let service = app.into_make_service_with_connect_info::<SocketAddr>();
@@ -52,17 +96,12 @@ pub async fn serve(
         .keep_alive_interval(Some(Duration::from_secs(60)))
         .keep_alive_timeout(Duration::from_secs(20))
         .max_concurrent_streams(256);
-    match &config.tls {
-        TlsMode::Off => server.acceptor(Deadline(axum_server::accept::DefaultAcceptor)).serve(service).await,
-        TlsMode::Files { cert, key } => {
-            let tls = RustlsConfig::from_config(from_files(cert, key)?);
-            watch_files(tls.clone(), cert.clone(), key.clone());
+    match http {
+        Http::Off => server.acceptor(Deadline(axum_server::accept::DefaultAcceptor)).serve(service).await,
+        Http::Files(tls) => {
             server.acceptor(Deadline(axum_server::tls_rustls::RustlsAcceptor::new(tls))).serve(service).await
         }
-        TlsMode::Acme(acme) => {
-            let acceptor = acme_acceptor(acme, &config.acme_cache())?;
-            server.acceptor(Deadline(acceptor)).serve(service).await
-        }
+        Http::Acme(acceptor) => server.acceptor(Deadline(*acceptor)).serve(service).await,
     }
     .map_err(|error| error.to_string())
 }
@@ -203,7 +242,7 @@ pub fn from_files(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, String> 
 /// Read the files again whenever they change: certbot renews every two months, and the server
 /// should not need a restart for it. A pair that does not load — the certificate written, the
 /// key not yet — keeps the one that works, and is tried again next time.
-fn watch_files(tls: RustlsConfig, cert: PathBuf, key: PathBuf) {
+fn watch_files(tls: Option<RustlsConfig>, ldap: Slot, cert: PathBuf, key: PathBuf) {
     let stamp = move |cert: &Path, key: &Path| -> Option<(SystemTime, SystemTime)> {
         Some((std::fs::metadata(cert).ok()?.modified().ok()?, std::fs::metadata(key).ok()?.modified().ok()?))
     };
@@ -219,7 +258,10 @@ fn watch_files(tls: RustlsConfig, cert: PathBuf, key: PathBuf) {
             }
             match from_files(&cert, &key) {
                 Ok(config) => {
-                    tls.reload_from_config(config);
+                    if let Some(tls) = &tls {
+                        tls.reload_from_config(config.clone());
+                    }
+                    *ldap.write() = Some(config);
                     seen = now;
                     tracing::info!(cert = %cert.display(), "certificate changed on disk; using the new one");
                 }
@@ -231,7 +273,7 @@ fn watch_files(tls: RustlsConfig, cert: PathBuf, key: PathBuf) {
 
 /// Let's Encrypt over TLS-ALPN-01: the CA connects to port 443 and asks for a special
 /// certificate, which only whoever controls that port can show. No port 80, no web root.
-fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<rustls_acme::axum::AxumAcceptor, String> {
+fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<(rustls_acme::axum::AxumAcceptor, Arc<ServerConfig>), String> {
     let mut settings = AcmeConfig::new_with_provider([acme.domain.clone()], provider())
         .cache(DirCache::new(cache.to_path_buf()))
         .directory(&acme.directory);
@@ -249,6 +291,12 @@ fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<rustls_acme::axum::AxumAcc
         .with_no_client_auth()
         .with_cert_resolver(state.resolver());
     tls.alpn_protocols = alpn();
+    // LDAP shows the same certificate, from the same resolver, which knows when it was renewed.
+    let for_ldap = ServerConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .map_err(|error| error.to_string())?
+        .with_no_client_auth()
+        .with_cert_resolver(state.resolver());
     let acceptor = state.axum_acceptor(Arc::new(tls));
 
     let domain = acme.domain.clone();
@@ -264,7 +312,7 @@ fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<rustls_acme::axum::AxumAcc
             }
         }
     });
-    Ok(acceptor)
+    Ok((acceptor, Arc::new(for_ldap)))
 }
 
 /// A client configuration that trusts the usual roots and one more CA from a PEM file.

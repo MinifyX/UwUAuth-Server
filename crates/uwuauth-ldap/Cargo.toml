@@ -1,0 +1,40 @@
+[package]
+name = "uwuauth-ldap"
+description = "UwUAuth Server's LDAP: the directory for NAS, Linux and apps that speak LDAP, in the style of Active Directory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+uwuauth-api.workspace = true
+uwuauth-store.workspace = true
+
+futures-util.workspace = true
+ldap3_proto.workspace = true
+parking_lot.workspace = true
+rustls.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true
+tempfile.workspace = true
+ldap3_proto.workspace = true
+futures-util.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+jiff.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"

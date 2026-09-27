@@ -26,6 +26,12 @@
 #                          macvlan networks; the proxy then reaches it at http://ADDRESS:8443
 #   --admin ADDRESS        invite ADDRESS as the first admin: the link to make the account with is
 #                          shown at the end (and mailed, once the server can send mail)
+#   --ldap                 serve LDAP too, for a NAS, Linux logins and apps without OpenID Connect:
+#                          LDAPS on 636 and LDAP with StartTLS on 389 (plain LDAP only, behind a
+#                          proxy without --ldap-cert). Only ever for your own network.
+#   --ldap-bind ADDRESS    the address of this machine LDAP listens on (default: every address —
+#                          then keep 389 and 636 out of reach from the internet)
+#   --ldap-plain           passwords over LDAP without TLS: only where nobody else is on the network
 #   --bind X               where it listens here: a port, or address:port (default 443 with
 #                          --domain, 127.0.0.1:8443 behind a proxy)
 #   --version TAG          latest (default), beta, edge, or an exact version like 0.0.1
@@ -52,6 +58,9 @@ proxy=""
 proxy_network=""
 proxy_ip=""
 admin=""
+ldap=false
+ldap_bind=""
+ldap_plain=false
 bind=""
 version=latest
 update_check=on
@@ -77,6 +86,9 @@ while [ $# -gt 0 ]; do
     --proxy-network) proxy_network="${2:?--proxy-network needs the name of a Docker network}"; shift 2 ;;
     --proxy-ip) proxy_ip="${2:?--proxy-ip needs an address}"; shift 2 ;;
     --admin) admin="${2:?--admin needs an e-mail address}"; shift 2 ;;
+    --ldap) ldap=true; shift ;;
+    --ldap-bind) ldap=true; ldap_bind="${2:?--ldap-bind needs an address}"; shift 2 ;;
+    --ldap-plain) ldap=true; ldap_plain=true; shift ;;
     --bind) bind="${2:?--bind needs a port}"; shift 2 ;;
     --version) version="${2:?--version needs a tag}"; shift 2 ;;
     --no-update-check) update_check=off; shift ;;
@@ -536,8 +548,6 @@ if [ -n "$proxy_network" ]; then
   if [ "${compose_major:-0}" -lt 2 ] || { [ "$compose_major" -eq 2 ] && [ "${compose_minor:-0}" -lt 24 ]; }; then
     die "joining the proxy's network needs Docker Compose 2.24 or newer, and this is $compose_version"
   fi
-  [ -e "$dir/compose.override.yaml" ] &&
-    die "there is a $dir/compose.override.yaml already, and joining the proxy's network would write one"
 fi
 
 if [ -n "$domain" ]; then
@@ -578,6 +588,49 @@ else
   public="$proxy"
 fi
 
+# ── LDAP ──────────────────────────────────────────────────────────────────────────────────────
+# For a NAS, Linux logins with SSSD, and apps that only know LDAP. Off unless asked for, and
+# never meant for the internet.
+if ! $ldap && $ask && have_tty; then
+  cat <<'LDAP'
+
+  Should UwUAuth serve LDAP as well? For a NAS, Linux logins and apps that cannot do OpenID
+  Connect. Only for your own network: 389 and 636 must never be reachable from the internet.
+
+LDAP
+  case "$(askfor "LDAP on? y or n" n)" in y | Y | yes | j | J | ja) ldap=true ;; esac
+  if $ldap && [ -z "$ldap_bind" ]; then
+    ldap_bind=$(askfor "On which address of this machine? (Enter for every address)")
+  fi
+fi
+if $ldap; then
+  if [ -n "$ldap_bind" ]; then
+    valid_ipv4 "$ldap_bind" || [ "$ldap_bind" = 0.0.0.0 ] || die "--ldap-bind wants an IPv4 address of this machine, not $ldap_bind"
+  else
+    ldap_bind=0.0.0.0
+  fi
+  # Without a certificate of its own (behind a proxy), LDAP can only go without TLS.
+  if [ -z "$domain" ] && ! $ldap_plain; then
+    if $ask && have_tty; then
+      warn "behind a proxy this server has no certificate for LDAP, so passwords would cross the network in the clear"
+      case "$(askfor "Allow that anyway, because only your own network reaches LDAP? y or n" n)" in
+        y | Y | yes | j | J | ja) ldap_plain=true ;;
+        *) die "LDAP without TLS was not allowed. Give it a certificate (UWUAUTH_LDAP_TLS_CERT in .env, see docs/ldap.md) or run install.sh with --ldap-plain" ;;
+      esac
+    else
+      die "behind a proxy LDAP has no certificate: allow passwords without TLS with --ldap-plain, or see docs/ldap.md"
+    fi
+  fi
+  for port in 389 636; do
+    if [ "$port" = 636 ] && [ -z "$domain" ]; then continue; fi
+    port_busy "$port" && die "port $port is taken on this machine, and LDAP wants it"
+  done
+fi
+
+if { [ -n "$proxy_network" ] || $ldap; } && [ -e "$dir/compose.override.yaml" ]; then
+  die "there is a $dir/compose.override.yaml already, and install.sh would write one"
+fi
+
 # ── the files ─────────────────────────────────────────────────────────────────────────────────
 printf '\n'
 files_from=""
@@ -605,24 +658,51 @@ else
   set_env UWUAUTH_TLS off
   set_env UWUAUTH_TRUST_FORWARDED on
 fi
+if $ldap; then
+  set_env UWUAUTH_LDAP_LISTEN 0.0.0.0:10389
+  [ -n "$domain" ] && set_env UWUAUTH_LDAPS_LISTEN 0.0.0.0:10636
+  set_env UWUAUTH_LDAP_PLAIN_BIND "$($ldap_plain && echo on || echo off)"
+fi
 step "wrote $dir/.env"
 
-# Compose lays compose.override.yaml over compose.yaml by itself, and update.sh leaves it alone.
-if [ -n "$proxy_network" ]; then
+# Compose lays compose.override.yaml over compose.yaml by itself, and update.sh leaves it alone:
+# the proxy's network, and LDAP's ports.
+if [ -n "$proxy_network" ] || $ldap; then
+  ldap_ports() {
+    printf '      - "%s:389:10389"\n' "$ldap_bind"
+    [ -n "$domain" ] && printf '      - "%s:636:10636"\n' "$ldap_bind"
+    return 0
+  }
   {
-    printf '# Written by install.sh: the reverse proxy runs as a container in the Docker network\n'
-    printf '# %s, so the server joins that network and takes no port on this machine.\n' "$proxy_network"
-    printf '# The proxy reaches it at %s.\n' "$upstream"
-    printf 'services:\n  %s:\n    ports: !reset []\n    networks:\n' "$service"
-    if [ -n "$proxy_ip" ]; then
-      printf '      "%s":\n        ipv4_address: %s\n' "$proxy_network" "$proxy_ip"
-    else
-      printf '      "%s": {}\n' "$proxy_network"
+    printf '# Written by install.sh. update.sh leaves this file alone.\n'
+    if [ -n "$proxy_network" ]; then
+      printf '# The reverse proxy runs as a container in the Docker network %s, so the server\n' "$proxy_network"
+      printf '# joins that network and takes no HTTPS port on this machine. The proxy reaches it at %s.\n' "$upstream"
     fi
-    printf '\nnetworks:\n  "%s":\n    name: "%s"\n    external: true\n' "$proxy_network" "$proxy_network"
+    $ldap && printf '# LDAP answers on %s of this machine.\n' "$ldap_bind"
+    printf 'services:\n  %s:\n' "$service"
+    if [ -n "$proxy_network" ]; then
+      if $ldap; then
+        printf '    ports: !override\n'
+        ldap_ports
+      else
+        printf '    ports: !reset []\n'
+      fi
+      printf '    networks:\n'
+      if [ -n "$proxy_ip" ]; then
+        printf '      "%s":\n        ipv4_address: %s\n' "$proxy_network" "$proxy_ip"
+      else
+        printf '      "%s": {}\n' "$proxy_network"
+      fi
+      printf '\nnetworks:\n  "%s":\n    name: "%s"\n    external: true\n' "$proxy_network" "$proxy_network"
+    else
+      printf '    ports:\n'
+      ldap_ports
+    fi
   } >"$dir/compose.override.yaml"
   chmod 0644 "$dir/compose.override.yaml"
-  step "wrote $dir/compose.override.yaml: the server joins $proxy_network"
+  [ -n "$proxy_network" ] && step "wrote $dir/compose.override.yaml: the server joins $proxy_network"
+  $ldap && step "wrote $dir/compose.override.yaml: LDAP on $ldap_bind"
 fi
 
 # update.sh replaces a compose.yaml it knows it put here, and this is how it knows.
@@ -642,9 +722,9 @@ give_up() {
   docker compose down </dev/null >/dev/null 2>&1
   mv -f "$dir/.env" "$dir/.env.failed"
   # Left behind, it would lay itself over the next try, whatever that one is told.
-  [ -n "$proxy_network" ] && mv -f "$dir/compose.override.yaml" "$dir/compose.override.yaml.failed"
+  [ -e "$dir/compose.override.yaml" ] && mv -f "$dir/compose.override.yaml" "$dir/compose.override.yaml.failed"
   die "$1
-      Your answers are in $dir/.env.failed$([ -n "$proxy_network" ] && printf ' and compose.override.yaml.failed'). Once the cause is fixed, run install.sh again."
+      Your answers are in $dir/.env.failed$({ [ -n "$proxy_network" ] || $ldap; } && printf ' and compose.override.yaml.failed'). Once the cause is fixed, run install.sh again."
 }
 
 if $pull; then
@@ -689,6 +769,7 @@ cat <<DONE
   Address       $public
 
   Admin portal  $public/admin
+  Apps sign in with OpenID Connect: $public/.well-known/openid-configuration
 
   Next version:   cd $dir && sudo bash update.sh
 
@@ -718,6 +799,14 @@ else
     $invite_hint
 
 LATER
+fi
+
+if $ldap; then
+  cat <<LDAPDONE
+  LDAP answers on $ldap_bind port 389$([ -n "$domain" ] && printf ' (StartTLS) and 636 (LDAPS)')$($ldap_plain && printf ', passwords also without TLS').
+  Accounts for apps to read it with are made in the admin portal, under LDAP.
+
+LDAPDONE
 fi
 
 if [ -n "$proxy" ]; then

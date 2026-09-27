@@ -17,6 +17,7 @@ path = "tests/integration/main.rs"
 
 [dependencies]
 uwuauth-api.workspace = true
+uwuauth-ldap.workspace = true
 uwuauth-mail.workspace = true
 uwuauth-store.workspace = true
 

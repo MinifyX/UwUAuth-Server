@@ -12,6 +12,7 @@ pub mod admin;
 pub mod apps;
 pub mod groups;
 pub mod invitations;
+pub mod ldap;
 pub mod links;
 pub mod login;
 pub mod me;
@@ -36,6 +37,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .merge(invitations::routes())
         .merge(admin::routes())
         .merge(apps::routes())
+        .merge(ldap::routes())
         .merge(crate::tokens::routes())
 }
 
