@@ -4,20 +4,37 @@
 //! itself, so PostgreSQL can come later as a second backend behind the same methods — for a
 //! company that wants its directory where its other databases are, or runs more than one server.
 //!
-//! Stage 0 keeps only what the server knows about itself. People, groups and everything the
-//! protocols need come with stage 1 and later (docs/plan.md), each as a numbered schema step.
+//! Stage 1 brings the directory: people, groups, how they sign in, who looks after whom, and a
+//! log of what happened. Every write bumps a counter ([`Store::generation`]), so what reads the
+//! whole directory often — LDAP, later — can keep it in memory until something changes.
 
+pub mod access;
+pub mod attributes;
 mod backup;
 pub mod backups;
 pub mod clock;
+pub mod credentials;
+pub mod events;
+pub mod groups;
 mod migrations;
+pub mod people;
+pub mod sessions;
 mod sqlite;
 
+pub use access::{Managed, Window};
+pub use attributes::{ApiToken, AttributeDef};
 pub use backup::restore;
+pub use credentials::{AppPassword, Passkey};
+pub use events::{Event, EventFilter};
+pub use groups::{ADMINS_ID, EVERYONE_ID, Group, GroupFields, Members, Membership};
 pub use migrations::SCHEMA_VERSION;
+pub use people::{NewPerson, Person};
+pub use sessions::{Link, Purpose, Session};
 
+use rusqlite::{OptionalExtension, params};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// What can go wrong down here.
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +46,9 @@ pub enum StoreError {
     /// Something with that name is there already, like a person with that user name.
     #[error("it exists already")]
     Exists,
+    /// A group would end up inside itself.
+    #[error("a group cannot be inside itself")]
+    Loop,
     /// The file was last opened by a newer UwUAuth Server, which changed it in ways this one
     /// does not know. Going on would mean guessing.
     #[error("the database comes from a newer UwUAuth Server (schema {found}, this one knows up to {known})")]
@@ -59,6 +79,7 @@ impl Default for Options {
 #[derive(Clone)]
 pub struct Store {
     backend: Arc<Backend>,
+    generation: Arc<AtomicU64>,
 }
 
 enum Backend {
@@ -69,7 +90,64 @@ impl Store {
     /// Open (or make) the SQLite database at `path` and bring its schema up to date.
     pub fn open_sqlite(path: &Path, options: &Options) -> Result<Self> {
         let sqlite = sqlite::Sqlite::open(path, options)?;
-        Ok(Self { backend: Arc::new(Backend::Sqlite(sqlite)) })
+        Ok(Self { backend: Arc::new(Backend::Sqlite(sqlite)), generation: Arc::default() })
+    }
+
+    /// Counts up with every write. Whatever keeps a copy of the directory compares it to know
+    /// whether its copy is still current.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// A setting or key the server keeps, as text.
+    pub async fn setting(&self, key: &str) -> Result<Option<String>> {
+        let key = key.to_string();
+        self.sqlite_read(move |conn| {
+            conn.query_row("SELECT value FROM server WHERE key = ?1", [key], |row| row.get(0)).optional()
+        })
+        .await
+    }
+
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let (key, value) = (key.to_string(), value.to_string());
+        self.sqlite_write(move |tx| {
+            tx.execute(
+                "INSERT INTO server (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+            .map(drop)
+        })
+        .await
+    }
+
+    /// The setting under `key`, or `value` written there first if there is none: for keys made
+    /// once on the first start.
+    pub async fn setting_or_insert(&self, key: &str, value: &str) -> Result<String> {
+        let (key, value) = (key.to_string(), value.to_string());
+        self.sqlite_write(move |tx| {
+            tx.execute("INSERT OR IGNORE INTO server (key, value) VALUES (?1, ?2)", params![key, value])?;
+            tx.query_row("SELECT value FROM server WHERE key = ?1", [key], |row| row.get(0))
+        })
+        .await
+    }
+
+    /// Once a day: sessions and links that ran out, events older than a year, people in the
+    /// trash for 30 days. How many people went for good.
+    pub async fn sweep(&self) -> Result<usize> {
+        self.sqlite_write(|tx| {
+            let now = clock::now();
+            tx.execute("DELETE FROM sessions WHERE expires < ?1", [&now])?;
+            tx.execute("DELETE FROM links WHERE expires < ?1 AND purpose != 'invite'", [&now])?;
+            tx.execute("DELETE FROM links WHERE expires < ?1", [clock::in_seconds(-30 * 86_400)])?;
+            tx.execute("DELETE FROM events WHERE time < ?1", [clock::in_seconds(-events::EVENT_DAYS * 86_400)])?;
+            tx.execute(
+                "DELETE FROM schedules WHERE subject_kind = 'person' AND subject_id IN \
+                 (SELECT id FROM people WHERE deleted < ?1)",
+                [clock::in_seconds(-people::TRASH_DAYS * 86_400)],
+            )?;
+            tx.execute("DELETE FROM people WHERE deleted < ?1", [clock::in_seconds(-people::TRASH_DAYS * 86_400)])
+        })
+        .await
     }
 
     /// Whether the database answers. What `/healthz` asks.
@@ -130,15 +208,19 @@ impl Store {
 
     /// Run `change` in a transaction on the write connection, on a blocking thread. It commits
     /// when `change` returns `Ok`, and rolls back otherwise.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the first writes come with stage 1"))]
     pub(crate) async fn sqlite_write<T, F>(&self, change: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T> + Send + 'static,
     {
         let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || match &*backend {
-            Backend::Sqlite(sqlite) => sqlite.write(change),
+        let generation = self.generation.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = match &*backend {
+                Backend::Sqlite(sqlite) => sqlite.write(change),
+            };
+            generation.fetch_add(1, Ordering::AcqRel);
+            result
         })
         .await
         .map_err(|_| StoreError::Gone)?
@@ -151,6 +233,14 @@ pub fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     name.into()
+}
+
+/// A store in a temporary directory of its own, for tests.
+#[cfg(test)]
+pub(crate) fn test_store() -> (Store, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let store = Store::open_sqlite(&dir.path().join("uwuauth.db"), &Options { readers: 2 }).expect("a database");
+    (store, dir)
 }
 
 #[cfg(test)]

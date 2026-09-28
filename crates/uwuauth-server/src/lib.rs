@@ -30,12 +30,11 @@ pub fn open_store(config: &Config) -> Result<Store, String> {
 
 /// What the API needs.
 pub async fn app_state(config: &Config, store: Store, logs: Arc<LogBuffer>) -> Result<AppState, String> {
-    let api = ApiConfig {
-        public: config.base_url(),
-        trust_forwarded: config.trust_forwarded,
-        backups: config.backups(),
-        data: config.data_dir.clone(),
-    };
+    let mut api = ApiConfig::new(&config.base_url(), config.data_dir.clone());
+    api.trust_forwarded = config.trust_forwarded;
+    api.backups = config.backups();
+    api.login_attempts = config.login_attempts;
+    api.start_settings = config.start_settings.clone();
     let state = AppState::new(store, api, updates::build().version, logs).await?;
     {
         let build = updates::build();
@@ -64,6 +63,9 @@ pub async fn run(
     let state = app_state(&config, store, logs).await?;
     spawn_maintenance(config.clone(), state.clone());
     updates::spawn(Arc::new(config.clone()), state.update.clone());
+    if state.mailer.enabled() {
+        tracing::info!("mail is set up");
+    }
     let app = uwuauth_api::router(state);
 
     let handle = Handle::new();
@@ -119,13 +121,19 @@ pub async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-/// Once a day: a backup, and the old ones swept away.
+/// Once a day: a backup, and the old ones swept away — backups, sessions and links that ran
+/// out, events older than a year, people in the trash for 30 days.
 pub fn spawn_maintenance(config: Config, state: AppState) {
     tokio::spawn(async move {
         // Not at once on start: a server that is restarted in a loop should not write a backup
         // every time.
         tokio::time::sleep(Duration::from_secs(10 * 60)).await;
         loop {
+            match state.store.sweep().await {
+                Ok(0) => {}
+                Ok(gone) => tracing::info!(gone, "people who were in the trash for 30 days are gone"),
+                Err(error) => tracing::warn!(%error, "sweeping up did not work"),
+            }
             match backups::write(&state.store, &config.backups(), None).await {
                 Ok(path) => {
                     tracing::info!(path = %path.display(), "nightly backup written");

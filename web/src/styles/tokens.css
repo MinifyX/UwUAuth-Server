@@ -30,6 +30,12 @@
   --uwu-offline: #b3a8b3;
   --uwu-alarm: #8e5510;
 
+  /* Always white, in both themes: QR codes (cameras read dark on white best)
+     and the knob of a switch. */
+  --uwu-paper: #ffffff;
+  --uwu-shadow: rgba(20, 16, 22, 0.45);
+  --uwu-scrim: rgba(20, 16, 22, 0.45);
+
   --uwu-radius-control: 10px;
   --uwu-radius-card: 16px;
   --uwu-radius-pill: 999px;
@@ -57,6 +63,9 @@
   --uwu-online: #5cc7ac;
   --uwu-offline: #6d6474;
   --uwu-alarm: #d8a25c;
+
+  --uwu-shadow: rgba(0, 0, 0, 0.6);
+  --uwu-scrim: rgba(0, 0, 0, 0.55);
 }
 
 /* Animations off collapses every transition to nothing and holds Nyu still. */

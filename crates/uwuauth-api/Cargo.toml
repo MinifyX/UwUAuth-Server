@@ -8,11 +8,19 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+uwuauth-mail.workspace = true
 uwuauth-store.workspace = true
 uwuauth-web.workspace = true
 
+argon2.workspace = true
 axum.workspace = true
+base64.workspace = true
+ciborium.workspace = true
+jiff.workspace = true
 parking_lot.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
@@ -20,6 +28,8 @@ tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

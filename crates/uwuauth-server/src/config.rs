@@ -7,6 +7,8 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use uwuauth_api::Settings;
+use uwuauth_mail::{Language, Security, SmtpSettings};
 
 /// Where the certificate comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +67,12 @@ pub struct Config {
     /// The image tag this machine follows (`latest`, `beta`, `edge` or a version), which decides
     /// what counts as an update.
     pub channel: Option<String>,
+    /// How many sign-ins one address may try at once before it has to wait (one more a minute).
+    /// More for many people behind one address.
+    pub login_attempts: u32,
+    /// Mail server, language and time zone a new server starts with, until an admin saves others
+    /// in the portal.
+    pub start_settings: Settings,
 }
 
 impl Default for Config {
@@ -77,6 +85,8 @@ impl Default for Config {
             trust_forwarded: false,
             update_check: true,
             channel: None,
+            login_attempts: 10,
+            start_settings: Settings::default(),
         }
     }
 }
@@ -111,6 +121,53 @@ impl Config {
                 switch(&check).ok_or_else(|| format!("UWUAUTH_UPDATE_CHECK must be on or off: {check}"))?;
         }
         config.channel = var("UWUAUTH_CHANNEL");
+        if let Some(attempts) = var("UWUAUTH_LOGIN_ATTEMPTS") {
+            config.login_attempts = attempts
+                .parse()
+                .ok()
+                .filter(|attempts| (1..=10_000).contains(attempts))
+                .ok_or_else(|| format!("UWUAUTH_LOGIN_ATTEMPTS must be a number from 1 to 10000: {attempts}"))?;
+        }
+        if let Some(language) = var("UWUAUTH_LANGUAGE") {
+            config.start_settings.default_language = match language.to_ascii_lowercase().as_str() {
+                "de" => Language::De,
+                "en" => Language::En,
+                _ => return Err(format!("UWUAUTH_LANGUAGE must be de or en: {language}")),
+            };
+        }
+        if let Some(zone) = var("UWUAUTH_TIMEZONE").or_else(|| var("TZ")) {
+            if jiff::tz::TimeZone::get(&zone).is_err() {
+                return Err(format!("UWUAUTH_TIMEZONE is not a time zone like Europe/Berlin: {zone}"));
+            }
+            config.start_settings.timezone = zone;
+        }
+        if let Some(host) = var("UWUAUTH_SMTP_HOST") {
+            let security = match var("UWUAUTH_SMTP_SECURITY").as_deref().map(str::to_ascii_lowercase).as_deref() {
+                None | Some("starttls") => Security::Starttls,
+                Some("tls" | "ssl") => Security::Tls,
+                Some("none" | "off") => Security::None,
+                Some(other) => return Err(format!("UWUAUTH_SMTP_SECURITY must be starttls, tls or none: {other}")),
+            };
+            let port = match var("UWUAUTH_SMTP_PORT") {
+                Some(port) => port.parse().map_err(|_| format!("UWUAUTH_SMTP_PORT is not a port: {port}"))?,
+                None => match security {
+                    Security::Tls => 465,
+                    Security::Starttls => 587,
+                    Security::None => 25,
+                },
+            };
+            let from =
+                var("UWUAUTH_SMTP_FROM").ok_or("UWUAUTH_SMTP_HOST needs UWUAUTH_SMTP_FROM: the sender address")?;
+            config.start_settings.smtp = Some(SmtpSettings {
+                host,
+                port,
+                security,
+                username: var("UWUAUTH_SMTP_USERNAME"),
+                password: var("UWUAUTH_SMTP_PASSWORD"),
+                from,
+                from_name: var("UWUAUTH_SMTP_FROM_NAME"),
+            });
+        }
 
         config.tls = match var("UWUAUTH_TLS").as_deref().map(str::to_ascii_lowercase).as_deref() {
             None | Some("off" | "proxy") => TlsMode::Off,
@@ -332,7 +389,28 @@ mod tests {
     }
 
     #[test]
+    fn mail_language_and_time_zone_are_where_a_new_server_starts() {
+        let started = config(&[
+            ("UWUAUTH_SMTP_HOST", "mail.example.com"),
+            ("UWUAUTH_SMTP_SECURITY", "tls"),
+            ("UWUAUTH_SMTP_FROM", "auth@example.com"),
+            ("UWUAUTH_LANGUAGE", "en"),
+            ("UWUAUTH_TIMEZONE", "America/New_York"),
+        ])
+        .unwrap();
+        let smtp = started.start_settings.smtp.unwrap();
+        assert_eq!((smtp.port, smtp.security), (465, Security::Tls));
+        assert_eq!(started.start_settings.default_language, Language::En);
+        assert_eq!(started.start_settings.timezone, "America/New_York");
+        assert!(config(&[("UWUAUTH_SMTP_HOST", "mail.example.com")]).is_err(), "no sender");
+        assert!(config(&[("UWUAUTH_LANGUAGE", "fr")]).is_err());
+        assert!(config(&[("UWUAUTH_TIMEZONE", "Mars/Olympus")]).is_err());
+    }
+
+    #[test]
     fn a_setting_that_is_set_wrong_stops_the_start() {
+        assert!(config(&[("UWUAUTH_LOGIN_ATTEMPTS", "0")]).is_err());
+        assert_eq!(config(&[("UWUAUTH_LOGIN_ATTEMPTS", "50")]).unwrap().login_attempts, 50);
         assert!(config(&[("UWUAUTH_TLS", "maybe")]).is_err());
         assert!(config(&[("UWUAUTH_LISTEN", "everywhere")]).is_err());
         assert!(config(&[("UWUAUTH_UPDATE_CHECK", "later")]).is_err());
