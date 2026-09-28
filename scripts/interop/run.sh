@@ -123,6 +123,9 @@ if [ "$what" = nextcloud ]; then
     --discoveryuri "$public/.well-known/openid-configuration" --scope "openid profile email groups" \
     --unique-uid 0 --mapping-uid preferred_username >/dev/null
   occ config:system:set allow_local_remote_servers --value true --type boolean >/dev/null
+  # user_oidc wants Nextcloud on https, except in debug mode: here everything is plain http
+  # inside one Docker network.
+  occ config:system:set debug --value true --type boolean >/dev/null
   docker run --rm --ipc=host --network uwuauth-interop_default -v "$PWD:/interop:ro" \
     mcr.microsoft.com/playwright:v1.63.0-noble node /interop/nextcloud.mjs "$public" nyu "correct horse battery"
 fi
