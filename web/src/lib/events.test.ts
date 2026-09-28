@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { alarming, eventText } from './events';
+import { setLanguage } from './i18n';
 import type { AuditEvent } from './types';
 
 const event = (kind: string, detail: Record<string, unknown>): AuditEvent => ({
@@ -13,6 +14,9 @@ const event = (kind: string, detail: Record<string, unknown>): AuditEvent => ({
   detail,
 });
 const names = (id: string | null) => (id === 'p1' ? 'Mia' : 'jemand');
+
+// The sentences in German, whatever language the machine running the tests speaks.
+beforeEach(() => setLanguage('de'));
 
 describe('app events', () => {
   it('read as sentences', () => {
