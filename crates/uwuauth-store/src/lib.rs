@@ -22,6 +22,7 @@ mod migrations;
 pub mod people;
 pub mod sessions;
 mod sqlite;
+pub mod suite;
 
 pub use access::{Managed, Window};
 pub use apps::{App, Grant, Refresh, RefreshToken, RegistrationToken};
@@ -34,6 +35,7 @@ pub use ldap::LdapAccount;
 pub use migrations::SCHEMA_VERSION;
 pub use people::{NewPerson, Person};
 pub use sessions::{Link, Purpose, Session};
+pub use suite::{PairingCode, ScimObject, ScimTarget, SuiteApp};
 
 use rusqlite::{OptionalExtension, params};
 use std::path::Path;
@@ -147,6 +149,7 @@ impl Store {
             tx.execute("DELETE FROM events WHERE time < ?1", [clock::in_seconds(-events::EVENT_DAYS * 86_400)])?;
             tx.execute("DELETE FROM refresh_tokens WHERE expires < ?1", [&now])?;
             tx.execute("DELETE FROM registration_tokens WHERE expires < ?1", [&now])?;
+            tx.execute("DELETE FROM pairing_codes WHERE expires < ?1", [clock::in_seconds(-86_400)])?;
             tx.execute("DELETE FROM session_apps WHERE created < ?1", [clock::in_seconds(-400 * 86_400)])?;
             tx.execute(
                 "DELETE FROM schedules WHERE subject_kind = 'person' AND subject_id IN \

@@ -78,6 +78,7 @@ pub async fn run(
     let (stopped_tx, stopped) = tokio::sync::watch::channel(false);
     start_ldap(&config, &state, prepared.ldap.clone(), stopped).await?;
     spawn_maintenance(config.clone(), state.clone());
+    uwuauth_api::suite::scim::spawn(state.clone());
     updates::spawn(Arc::new(config.clone()), state.update.clone());
     if state.mailer.enabled() {
         tracing::info!("mail is set up");

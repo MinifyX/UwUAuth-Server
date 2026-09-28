@@ -5,6 +5,7 @@ use crate::crypto::{random_token, sha256};
 use crate::errors::{ApiError, ApiResult};
 use crate::oidc::templates;
 use crate::session::{AdminOnly, ClientIp, Me};
+use crate::suite::Extras;
 use crate::{AppState, audit, policy};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -120,6 +121,12 @@ pub async fn check_new(state: &AppState, new: &NewApp) -> ApiResult<()> {
 
 /// Check what an app is made of and keep it. Its secret, if it has one, comes back once.
 pub async fn make(state: &AppState, new: NewApp, created_by: Option<&str>) -> ApiResult<(App, Option<String>)> {
+    let (app, secret) = prepare(state, new, created_by).await?;
+    Ok((state.store.create_app(app).await?, secret))
+}
+
+/// Check what an app is made of, without keeping it: the app, and its secret if it has one.
+pub async fn prepare(state: &AppState, new: NewApp, created_by: Option<&str>) -> ApiResult<(App, Option<String>)> {
     let template = new.template.as_deref().and_then(templates::find);
     let url = new.url.as_deref().map(str::trim).filter(|url| !url.is_empty()).unwrap_or_default();
     let slug = new.slug.as_deref().filter(|slug| !slug.is_empty()).unwrap_or("uwuauth");
@@ -153,15 +160,15 @@ pub async fn make(state: &AppState, new: NewApp, created_by: Option<&str>) -> Ap
     let app = App {
         client_id: client_id(&name),
         name,
-        template: template
-            .map(|template| template.key.to_string())
-            .or_else(|| new.template.clone().filter(|key| key == crate::oidc::register::REGISTERED)),
+        template: template.map(|template| template.key.to_string()).or_else(|| {
+            new.template.clone().filter(|key| key == crate::oidc::register::REGISTERED || key == crate::suite::TEMPLATE)
+        }),
         secret_hash: secret.as_ref().map(|secret| sha256(secret.as_bytes())),
         token_auth_method: if new.public { "none".into() } else { app.token_auth_method },
         created_by: created_by.map(str::to_string),
         ..app
     };
-    Ok((state.store.create_app(app).await?, secret))
+    Ok((app, secret))
 }
 
 /// Everything but the name, the id and the secret, checked and put onto `app`.
@@ -247,7 +254,16 @@ pub fn app_view(app: &App) -> Value {
 
 async fn list(State(state): State<AppState>, _admin: AdminOnly) -> ApiResult<Json<Value>> {
     let apps = state.store.apps().await?;
-    Ok(Json(json!(apps.iter().map(app_view).collect::<Vec<_>>())))
+    let extras = Extras::load(&state).await?;
+    Ok(Json(json!(
+        apps.iter()
+            .map(|app| {
+                let mut body = app_view(app);
+                extras.add(&state, &app.id, &mut body);
+                body
+            })
+            .collect::<Vec<_>>()
+    )))
 }
 
 async fn create(
@@ -268,6 +284,7 @@ async fn show(State(state): State<AppState>, admin: AdminOnly, Path(id): Path<St
     let app = state.store.app(&id).await?.ok_or_else(ApiError::not_found)?;
     let mut body = app_view(&app);
     body["issuer"] = json!(state.config.public);
+    Extras::load(&state).await?.add(&state, &app.id, &mut body);
     if let Some(template) = app.template.as_deref().and_then(templates::find) {
         let language = admin.person().map_or("de", |person| person.language.as_str());
         body["notes"] = json!(
@@ -364,7 +381,11 @@ async fn change(
         .await?
         .ok_or_else(ApiError::not_found)?;
     audit(&state, "app_changed", Some(&admin.actor_id()), None, Some(&id), &ip, json!({ "name": updated.name })).await;
-    Ok(Json(app_view(&updated)))
+    // Who may use it or its roles may have changed: that goes to the app over SCIM.
+    state.scim.wake();
+    let mut body = app_view(&updated);
+    Extras::load(&state).await?.add(&state, &id, &mut body);
+    Ok(Json(body))
 }
 
 async fn remove(
@@ -488,11 +509,12 @@ async fn my_apps(State(state): State<AppState>, me: Me) -> ApiResult<Json<Value>
     let membership = state.store.membership().await?;
     let groups = membership.groups_of(&me.person.id);
     let grants = state.store.grants_of(&me.person.id).await?;
+    let extras = Extras::load(&state).await?;
     let usable: Vec<Value> = apps
         .iter()
         .filter(|app| !app.disabled && app.launch_url.is_some())
         .filter(|app| app.allowed_groups.is_empty() || app.allowed_groups.iter().any(|group| groups.contains(group)))
-        .map(|app| json!({ "id": app.id, "name": app.name, "description": app.description, "launchUrl": app.launch_url, "template": app.template }))
+        .map(|app| json!({ "id": app.id, "name": app.name, "description": app.description, "launchUrl": app.launch_url, "template": app.template, "icon": extras.icon(&state, &app.id) }))
         .collect();
     let connected: Vec<Value> = grants
         .iter()
