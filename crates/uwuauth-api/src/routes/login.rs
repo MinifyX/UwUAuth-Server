@@ -16,7 +16,7 @@ use super::{check_assertion, methods_json};
 use crate::crypto::{random_token, secret_hash, sha256, verify_password};
 use crate::errors::{ApiError, ApiResult};
 use crate::memory::PendingLogin;
-use crate::session::{ClientIp, MeSetup, SESSION_COOKIE, SignIn, cookie, set_cookie, start, with_cookies};
+use crate::session::{ClientIp, MeSetup, SESSION_COOKIE, SignIn, set_cookie, start, with_cookies};
 use crate::{AppState, audit, policy, totp, webauthn};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -324,10 +324,9 @@ async fn passkey(
     finish(&state, &person, &[SignIn::Passkey], body.remember, ip, &headers).await
 }
 
-async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
-    if let Some(token) = cookie(&headers, SESSION_COOKIE) {
-        state.store.end_session(&sha256(token.as_bytes())).await?;
-    }
+async fn logout(State(state): State<AppState>, ClientIp(ip): ClientIp, headers: HeaderMap) -> ApiResult<Response> {
+    // The apps that signed in with this session hear about it (back-channel logout).
+    crate::oidc::logout::end_from_headers(&state, &headers, ip).await?;
     let clear = set_cookie(&state, SESSION_COOKIE, "", Some(0));
     Ok(with_cookies(StatusCode::NO_CONTENT.into_response(), vec![clear]))
 }

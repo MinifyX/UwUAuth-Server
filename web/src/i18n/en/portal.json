@@ -40,7 +40,7 @@
   "Nicht eingerichtet.": "Not set up.",
   "App-Passwörter": "App passwords",
   "{n} Stück. Die Person verwaltet sie selbst.": "{n} of them. The person manages them themselves.",
-  "Wann sich {name} bei Apps anmelden darf, die über UwUAuth angemeldet werden – das gilt ab der nächsten Version von UwUAuth. Keine Zeitfenster heißt: jederzeit.": "When {name} may sign in to apps that sign in through UwUAuth – this applies from the next version of UwUAuth on. No time windows means: any time.",
+  "Wann sich {name} bei Apps anmelden darf, die über UwUAuth angemeldet werden – bei allen oder nur bei einer. Keine Zeitfenster heißt: jederzeit.": "When {name} may sign in to apps that sign in through UwUAuth – to all of them or to just one. No time windows means: any time.",
   "Geräte": "Devices",
   "Überall abmelden": "Sign out everywhere",
   "Abgemeldet.": "Signed out.",

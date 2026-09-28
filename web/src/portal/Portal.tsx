@@ -4,6 +4,7 @@ import { go, useRoute } from '../lib/route';
 import type { Me } from '../lib/types';
 import { word } from '../lib/words';
 import { Devices } from './Devices';
+import { MyApps } from './MyApps';
 import { MyGroups } from './MyGroups';
 import { MyPeople } from './MyPeople';
 import { Overview } from './Overview';
@@ -12,6 +13,7 @@ import { Security } from './Security';
 
 const PAGES: NavItem[] = [
   { path: '/', label: N_('Übersicht'), icon: 'house' },
+  { path: '/apps', label: N_('Meine Apps'), icon: 'grid' },
   { path: '/profile', label: N_('Profil'), icon: 'user' },
   { path: '/security', label: N_('Sicherheit'), icon: 'shield' },
   { path: '/devices', label: N_('Geräte & Verlauf'), icon: 'devices' },
@@ -43,6 +45,7 @@ export function Portal({ me }: { me: Me }) {
       }
     >
       {current.path === '/' && <Overview me={me} />}
+      {current.path === '/apps' && <MyApps />}
       {current.path === '/profile' && <Profile me={me} />}
       {current.path === '/security' && <Security me={me} />}
       {current.path === '/devices' && <Devices me={me} />}

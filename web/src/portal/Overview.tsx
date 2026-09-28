@@ -1,10 +1,14 @@
+import { useEffect, useState } from 'react';
 import { Avatar } from '../components/bits';
+import { Section } from '../components/controls';
 import { Icon, type IconName } from '../components/Icon';
 import { NyuScene } from '../components/nyu/scenes';
+import { api } from '../lib/api';
 import { t, useLanguage } from '../lib/i18n';
 import { go } from '../lib/route';
-import type { Me } from '../lib/types';
+import type { Me, MyApps } from '../lib/types';
 import { word } from '../lib/words';
+import { AppTiles } from './MyApps';
 
 type Todo = { icon: IconName; title: string; text: string; action: string; path: string };
 
@@ -67,6 +71,13 @@ function todos(me: Me): Todo[] {
 export function Overview({ me }: { me: Me }) {
   useLanguage();
   const list = todos(me);
+  const [apps, setApps] = useState<MyApps['apps']>([]);
+  useEffect(() => {
+    api<MyApps>('/uwu/v1/me/apps').then(
+      (data) => setApps(data.apps),
+      () => undefined,
+    );
+  }, []);
   return (
     <>
       <div className="hello">
@@ -78,6 +89,19 @@ export function Overview({ me }: { me: Me }) {
           </p>
         </div>
       </div>
+
+      {apps.length > 0 && (
+        <Section
+          title={t('Meine Apps')}
+          actions={
+            <button type="button" className="link-button small" onClick={() => go('/apps')}>
+              {t('Alle ansehen')}
+            </button>
+          }
+        >
+          <AppTiles apps={apps} />
+        </Section>
+      )}
 
       {list.length > 0 ? (
         <div className="todo-grid">

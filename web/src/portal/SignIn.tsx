@@ -8,7 +8,7 @@ import { api } from '../lib/api';
 import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { reloadMe } from '../lib/me';
-import { continueTarget, go, useRoute } from '../lib/route';
+import { continueTarget, go, goTo, useRoute } from '../lib/route';
 import { autofillAvailable, available, getPasskey } from '../lib/webauthn';
 
 type Answer =
@@ -20,12 +20,14 @@ type Json = Record<string, unknown>;
 /** After signing in: where `?continue=` points, or the portal. */
 export async function afterSignIn(query: URLSearchParams) {
   const target = continueTarget(query.get('continue'));
-  if (target) {
-    location.href = target;
+  if (target && !target.startsWith('/#/')) {
+    goTo(target);
     return;
   }
+  // A page of this app: only the part after `#` changes, so the page has to learn who signed in.
   await reloadMe();
-  go('/');
+  if (target) goTo(target);
+  else go('/');
 }
 
 /**
@@ -146,7 +148,13 @@ export function SignIn() {
       <div className="signin-head">
         <Nyu size={92} mood="happy" />
         <h1 className="card-title">{t('Anmelden')}</h1>
-        <p className="muted">{t('Schön, dass du da bist.')}</p>
+        <p className="muted">
+          {route.query.get('fresh') === '1'
+            ? t('Die App möchte, dass du dich noch einmal anmeldest.')
+            : continueTarget(route.query.get('continue'))
+              ? t('Melde dich an, dann geht es gleich weiter.')
+              : t('Schön, dass du da bist.')}
+        </p>
       </div>
       {available() && (
         <>

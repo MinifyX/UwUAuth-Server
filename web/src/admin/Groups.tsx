@@ -11,7 +11,7 @@ import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { go } from '../lib/route';
 import { toast } from '../lib/toast';
-import type { Group, GroupDetail, Me, Person } from '../lib/types';
+import type { App, Group, GroupDetail, Me, Person } from '../lib/types';
 import { groupName } from '../lib/words';
 import { Confirm } from '../portal/Security';
 
@@ -158,6 +158,7 @@ function GroupPage({ id, me }: { id: string; me: Me }) {
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [apps, setApps] = useState<App[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const load = useCallback(() => {
@@ -167,6 +168,7 @@ function GroupPage({ id, me }: { id: string; me: Me }) {
   useEffect(() => {
     api<Group[]>('/uwu/v1/groups').then(setGroups, () => undefined);
     api<Person[]>('/uwu/v1/people').then(setPeople, () => undefined);
+    api<App[]>('/uwu/v1/apps').then(setApps, () => undefined);
   }, []);
 
   const back = (
@@ -225,12 +227,13 @@ function GroupPage({ id, me }: { id: string; me: Me }) {
       <Section
         title={t('Zeitfenster')}
         lead={t(
-          'Wann sich alle in dieser Gruppe bei Apps anmelden dürfen, die über UwUAuth angemeldet werden – das gilt ab der nächsten Version von UwUAuth. Keine Zeitfenster heißt: jederzeit.',
+          'Wann sich alle in dieser Gruppe bei Apps anmelden dürfen, die über UwUAuth angemeldet werden – bei allen oder nur bei einer. Keine Zeitfenster heißt: jederzeit.',
         )}
       >
         <WindowsEditor
           key={JSON.stringify(group.windows)}
           windows={group.windows}
+          apps={apps}
           onSave={async (windows) => {
             await api(`${base}/windows`, { method: 'PUT', body: windows });
             saved();

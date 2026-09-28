@@ -37,14 +37,18 @@ export function go(path: string) {
   location.hash = path;
 }
 
+/** Pages of this app that need somebody signed in and are worth coming back to after signing in. */
+const RETURN_PAGES = /^\/#\/(device|consent)(\?[A-Za-z0-9=&_-]*)?$/;
+
 /**
- * Where to go after signing in, from `?continue=`: only a path on this server under `/oauth/`
- * (where OpenID Connect sends people to sign in first). Anything else — another site, `//host`,
- * a script URL — is ignored, so a link can never send somebody somewhere else after they
- * signed in.
+ * Where to go after signing in, from `?continue=`: a path on this server under `/oauth/` (where
+ * OpenID Connect sends people to sign in first), or this app's own device and consent pages
+ * (`/#/device?code=…`). Anything else — another site, `//host`, a script URL — is ignored, so
+ * a link can never send somebody somewhere else after they signed in.
  */
 export function continueTarget(value: string | null): string | null {
   if (!value) return null;
+  if (RETURN_PAGES.test(value)) return value;
   if (!value.startsWith('/oauth/') || value.startsWith('//') || value.includes('\\')) return null;
   try {
     const url = new URL(value, 'http://uwuauth.invalid');
@@ -53,4 +57,9 @@ export function continueTarget(value: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** Off to a target from `continueTarget`. */
+export function goTo(target: string) {
+  window.location.assign(target);
 }

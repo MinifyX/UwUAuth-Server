@@ -15,8 +15,8 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new().route("/uwu/v1/server", get(server))
 }
 
-/// The protocols this build speaks. Empty until stage 2 brings OpenID Connect.
-const PROTOCOLS: &[&str] = &[];
+/// The protocols this build speaks.
+const PROTOCOLS: &[&str] = &["oidc"];
 
 async fn server(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
@@ -24,6 +24,7 @@ async fn server(State(state): State<AppState>) -> Json<Value> {
         "version": state.version,
         "issuer": state.config.public,
         "protocols": PROTOCOLS,
+        "openidConfiguration": format!("{}/.well-known/openid-configuration", state.config.public),
     }))
 }
 

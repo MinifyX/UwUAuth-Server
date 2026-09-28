@@ -69,7 +69,7 @@
   "1 Person ist darin, auch über Gruppen in der Gruppe.": "1 person is in it, groups inside the group included.",
   "{n} Personen sind darin, auch über Gruppen in der Gruppe.": "{n} people are in it, groups inside the group included.",
   "Zeitfenster": "Time windows",
-  "Wann sich alle in dieser Gruppe bei Apps anmelden dürfen, die über UwUAuth angemeldet werden – das gilt ab der nächsten Version von UwUAuth. Keine Zeitfenster heißt: jederzeit.": "When everybody in this group may sign in to apps that sign in through UwUAuth – this applies from the next version of UwUAuth on. No time windows means: any time.",
+  "Wann sich alle in dieser Gruppe bei Apps anmelden dürfen, die über UwUAuth angemeldet werden – bei allen oder nur bei einer. Keine Zeitfenster heißt: jederzeit.": "When everybody in this group may sign in to apps that sign in through UwUAuth – to all of them or to just one. No time windows means: any time.",
   "Gruppe „{name}“ löschen?": "Delete the group “{name}”?",
   "Die Personen darin bleiben, nur die Gruppe verschwindet.": "The people in it stay; only the group goes.",
   "Gelöscht.": "Deleted.",

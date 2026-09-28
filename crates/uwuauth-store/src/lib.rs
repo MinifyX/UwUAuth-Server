@@ -9,6 +9,7 @@
 //! whole directory often — LDAP, later — can keep it in memory until something changes.
 
 pub mod access;
+pub mod apps;
 pub mod attributes;
 mod backup;
 pub mod backups;
@@ -22,6 +23,7 @@ pub mod sessions;
 mod sqlite;
 
 pub use access::{Managed, Window};
+pub use apps::{App, Grant, Refresh, RefreshToken, RegistrationToken};
 pub use attributes::{ApiToken, AttributeDef};
 pub use backup::restore;
 pub use credentials::{AppPassword, Passkey};
@@ -140,6 +142,9 @@ impl Store {
             tx.execute("DELETE FROM links WHERE expires < ?1 AND purpose != 'invite'", [&now])?;
             tx.execute("DELETE FROM links WHERE expires < ?1", [clock::in_seconds(-30 * 86_400)])?;
             tx.execute("DELETE FROM events WHERE time < ?1", [clock::in_seconds(-events::EVENT_DAYS * 86_400)])?;
+            tx.execute("DELETE FROM refresh_tokens WHERE expires < ?1", [&now])?;
+            tx.execute("DELETE FROM registration_tokens WHERE expires < ?1", [&now])?;
+            tx.execute("DELETE FROM session_apps WHERE created < ?1", [clock::in_seconds(-400 * 86_400)])?;
             tx.execute(
                 "DELETE FROM schedules WHERE subject_kind = 'person' AND subject_id IN \
                  (SELECT id FROM people WHERE deleted < ?1)",

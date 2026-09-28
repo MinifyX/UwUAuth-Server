@@ -14,6 +14,7 @@ import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { toast } from '../lib/toast';
 import type {
+  App,
   AttributeDef,
   Group,
   LinkResult,
@@ -48,6 +49,7 @@ export function PersonDetail({ id, me, onBack }: { id: string; me: Me; onBack: (
   const [people, setPeople] = useState<Person[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [defs, setDefs] = useState<AttributeDef[]>([]);
+  const [apps, setApps] = useState<App[]>([]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [run, busy] = useAction();
 
@@ -60,6 +62,7 @@ export function PersonDetail({ id, me, onBack }: { id: string; me: Me; onBack: (
     if (me.admin) {
       api<Group[]>('/uwu/v1/groups').then(setGroups, () => undefined);
       api<AttributeDef[]>('/uwu/v1/attributes').then(setDefs, () => undefined);
+      api<App[]>('/uwu/v1/apps').then(setApps, () => undefined);
     }
   }, [me.admin]);
 
@@ -270,13 +273,14 @@ export function PersonDetail({ id, me, onBack }: { id: string; me: Me; onBack: (
       <Section
         title={t('Zeitfenster')}
         lead={t(
-          'Wann sich {name} bei Apps anmelden darf, die über UwUAuth angemeldet werden – das gilt ab der nächsten Version von UwUAuth. Keine Zeitfenster heißt: jederzeit.',
+          'Wann sich {name} bei Apps anmelden darf, die über UwUAuth angemeldet werden – bei allen oder nur bei einer. Keine Zeitfenster heißt: jederzeit.',
           { name: person.displayName },
         )}
       >
         <WindowsEditor
           key={JSON.stringify(person.windows)}
           windows={person.windows}
+          apps={apps}
           onSave={async (windows) => {
             await api(`${base}/windows`, { method: 'PUT', body: windows });
             await changed(t('Gespeichert ✧'));

@@ -8,6 +8,12 @@ describe('continueTarget', () => {
     );
   });
 
+  it('takes the device and consent pages of this app', () => {
+    expect(continueTarget('/#/device?code=BCDF-GHJK')).toBe('/#/device?code=BCDF-GHJK');
+    expect(continueTarget('/#/device')).toBe('/#/device');
+    expect(continueTarget('/#/consent?request=a1_b-2')).toBe('/#/consent?request=a1_b-2');
+  });
+
   it('refuses everything else', () => {
     for (const value of [
       null,
@@ -18,6 +24,13 @@ describe('continueTarget', () => {
       '/oauth/../admin',
       '/\\evil.example.net/oauth/',
       'javascript:alert(1)',
+      '/#/admin',
+      '/#/device/../admin',
+      '/#/device?code=<script>',
+      '/#/device?code=x#y',
+      '//#/device',
+      'https://evil.example.net/#/device',
+      '/oauth\\authorize',
     ]) {
       expect(continueTarget(value), String(value)).toBeNull();
     }
