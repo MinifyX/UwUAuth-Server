@@ -11,7 +11,8 @@
 //! The second step of a sign-in is limited per account as well: whoever tries it knows the
 //! password already, and could otherwise guess six digits from as many addresses as they have.
 //! So is every mail somebody can make the server send to an address, so nobody fills an inbox.
-//! LDAP binds count per address and per account like sign-ins on the web.
+//! LDAP binds have a bucket per address of their own, and only wrong ones take from it: apps
+//! bind for every person who signs in, often from one address.
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -98,6 +99,11 @@ impl Limiter<IpAddr> {
     pub fn check(&self, ip: IpAddr) -> bool {
         self.take(network(ip))
     }
+
+    /// Whether `ip` has a try left, without taking it.
+    pub fn allows_ip(&self, ip: IpAddr) -> bool {
+        self.allows(&network(ip))
+    }
 }
 
 /// The address a bucket belongs to: an IPv4 address as it is, an IPv6 address by its /64.
@@ -114,8 +120,10 @@ fn network(ip: IpAddr) -> IpAddr {
 
 /// The server's limiters.
 pub struct Limits {
-    /// Sign-ins with a password, per address. LDAP binds share it.
+    /// Sign-ins with a password, per address.
     pub login: Limiter,
+    /// Wrong LDAP binds, per address.
+    pub ldap: Limiter,
     /// Wrong passwords per account, from any address.
     pub account: Limiter<String>,
     /// What anybody can ask without signing in.
@@ -124,16 +132,21 @@ pub struct Limits {
     pub second_factor: Limiter<String>,
     /// Mails anybody can make the server send, per address they go to.
     pub mail: Limiter<String>,
+    /// OAuth's endpoints for apps (token, device authorization, registration), per address: apps
+    /// refresh often, but not thousands of times a second.
+    pub oauth: Limiter,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Limits {
             login: Limiter::new(10, Duration::from_secs(60)),
+            ldap: Limiter::new(20, Duration::from_secs(30)),
             account: Limiter::new(10, Duration::from_secs(60)),
             anonymous: Limiter::new(50, Duration::from_secs(60)),
             second_factor: Limiter::new(10, Duration::from_secs(60)),
             mail: Limiter::new(5, Duration::from_secs(5 * 60)),
+            oauth: Limiter::new(600, Duration::from_millis(100)),
         }
     }
 }
@@ -151,10 +164,12 @@ impl Limits {
         }
         Limits {
             login: generous(),
+            ldap: generous(),
             account: generous(),
             anonymous: generous(),
             second_factor: generous(),
             mail: generous(),
+            oauth: generous(),
         }
     }
 }

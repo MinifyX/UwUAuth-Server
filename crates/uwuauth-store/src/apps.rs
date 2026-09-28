@@ -405,6 +405,41 @@ impl Store {
         .await
     }
 
+    /// Keep the refresh token that replaces `parent` — only if `parent` is still there, used by
+    /// this very refresh: a second use of it in the meantime ended the family, and then nothing
+    /// new may join it. False then.
+    pub async fn add_refresh_token_after(&self, parent: &[u8], token: RefreshToken) -> Result<bool> {
+        let parent = parent.to_vec();
+        self.sqlite_write(move |tx| {
+            let alive: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM refresh_tokens WHERE hash = ?1 AND family = ?2 AND used IS NOT NULL)",
+                params![parent, token.family],
+                |row| row.get(0),
+            )?;
+            if !alive {
+                return Ok(false);
+            }
+            tx.execute(
+                &format!("INSERT INTO refresh_tokens ({REFRESH_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)"),
+                params![
+                    token.hash,
+                    token.grant_id,
+                    token.family,
+                    token.scope,
+                    token.stamp,
+                    token.auth_time,
+                    token.amr,
+                    token.sid,
+                    token.nonce,
+                    token.created,
+                    token.expires
+                ],
+            )?;
+            Ok(true)
+        })
+        .await
+    }
+
     /// Use a refresh token up. A token used a second time ends its family.
     pub async fn use_refresh_token(&self, hash: &[u8]) -> Result<Refresh> {
         let hash = hash.to_vec();

@@ -247,6 +247,19 @@ impl Store {
         .await
     }
 
+    /// Whether `person` has signed in on `device` before.
+    pub async fn known_device(&self, person: &str, device: &str) -> Result<bool> {
+        let (person, device) = (person.to_string(), device.to_string());
+        self.sqlite_read(move |conn| {
+            conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM devices WHERE person_id = ?1 AND device_id = ?2)",
+                [person, device],
+                |row| row.get(0),
+            )
+        })
+        .await
+    }
+
     /// Whether `person` has signed in anywhere before.
     pub async fn has_devices(&self, person: &str) -> Result<bool> {
         let person = person.to_string();

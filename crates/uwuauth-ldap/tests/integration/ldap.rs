@@ -440,3 +440,192 @@ async fn starttls_then_bind() {
     let mut secure = Client { framed: Framed::new(tls, LdapCodec::default()), next: 10 };
     assert_eq!(secure.bind("nyu", PASSWORD).await.code, LdapResultCode::Success, "over TLS a password is fine");
 }
+
+// ── What the security review found ─────────────────────
+
+async fn password_modify<S: AsyncRead + AsyncWrite + Unpin>(
+    client: &mut Client<S>,
+    old: &str,
+    new: &str,
+) -> LdapResult {
+    let request = LdapPasswordModifyRequest {
+        user_identity: None,
+        old_password: Some(old.into()),
+        new_password: Some(new.into()),
+    };
+    client.send(LdapOp::ExtendedRequest(request.into()), vec![]).await;
+    let LdapOp::ExtendedResponse(response) = client.receive().await.op else { panic!() };
+    response.res
+}
+
+#[tokio::test]
+async fn an_app_password_is_no_way_to_the_account_password() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    world.state.store.add_app_password(&nyu, "NAS", uwuauth_api::crypto::secret_hash("abcd-efgh-jkmn")).await.unwrap();
+    let mut client = world.connect();
+    assert_eq!(client.bind("nyu", "abcd-efgh-jkmn").await.code, LdapResultCode::Success);
+    let result = password_modify(&mut client, PASSWORD, "taken over for good").await;
+    assert_eq!(result.code, LdapResultCode::InsufficentAccessRights, "{result:?}");
+    let mut again = world.connect();
+    assert_eq!(again.bind("nyu", PASSWORD).await.code, LdapResultCode::Success, "the password is as it was");
+}
+
+#[tokio::test]
+async fn a_wrong_old_password_counts_like_a_wrong_sign_in() {
+    let world = world(true, None).await;
+    world.person("nyu", "Nyu").await;
+    let mut client = world.connect();
+    assert_eq!(client.bind("nyu", PASSWORD).await.code, LdapResultCode::Success);
+    let attempts = world.state.settings().lockout_attempts;
+    for _ in 0..attempts {
+        let result = password_modify(&mut client, "a guess", "a brand new password").await;
+        assert_eq!(result.code, LdapResultCode::InvalidCredentials);
+    }
+    // Locked now: even the right old password is turned away, and so is a bind with it.
+    let result = password_modify(&mut client, PASSWORD, "a brand new password").await;
+    assert_eq!(result.code, LdapResultCode::InvalidCredentials);
+    let mut again = world.connect();
+    let bind = again.bind("nyu", PASSWORD).await;
+    assert!(bind.message.contains("data 52e"), "{bind:?}");
+}
+
+#[tokio::test]
+async fn a_locked_account_looks_like_a_wrong_password_and_app_passwords_go_on() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    world.state.store.add_app_password(&nyu, "NAS", uwuauth_api::crypto::secret_hash("abcd-efgh-jkmn")).await.unwrap();
+    let mut client = world.connect();
+    for _ in 0..world.state.settings().lockout_attempts {
+        assert!(client.bind("nyu", "a guess").await.message.contains("data 52e"));
+    }
+    let bind = client.bind("nyu", PASSWORD).await;
+    assert!(bind.message.contains("data 52e"), "the right password tells nothing: {bind:?}");
+    assert_eq!(client.bind("nyu", "abcd-efgh-jkmn").await.code, LdapResultCode::Success);
+}
+
+#[tokio::test]
+async fn a_group_that_wants_a_second_step_wants_app_passwords_over_ldap() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    let careful = world
+        .state
+        .store
+        .create_group(GroupFields { name: "careful".into(), require_mfa: true, ..GroupFields::default() })
+        .await
+        .unwrap();
+    world.state.store.add_member(&careful.id, &nyu).await.unwrap();
+    let mut client = world.connect();
+    assert_eq!(client.bind("nyu", PASSWORD).await.code, LdapResultCode::InvalidCredentials);
+}
+
+#[tokio::test]
+async fn people_see_themselves_and_their_groups_but_not_everybody() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    let mia = world.person("mia", "Mia").await;
+    let family = world.group("family").await;
+    world.group("secret").await;
+    world.state.store.add_member(&family, &nyu).await.unwrap();
+    world.state.store.add_member(&family, &mia).await.unwrap();
+    world.service("nas", "service password").await;
+
+    let mut client = world.connect();
+    client.bind("nyu", PASSWORD).await;
+    let found = client.search("(objectClass=*)", &[]).await;
+    let mut dns: Vec<&str> = found.iter().map(|entry| entry.dn.as_str()).collect();
+    dns.sort();
+    assert_eq!(
+        dns,
+        [
+            "cn=everyone,ou=groups,dc=example,dc=com",
+            "cn=family,ou=groups,dc=example,dc=com",
+            "dc=example,dc=com",
+            "ou=groups,dc=example,dc=com",
+            "ou=people,dc=example,dc=com",
+            "ou=services,dc=example,dc=com",
+            "uid=nyu,ou=people,dc=example,dc=com",
+        ]
+    );
+    let group = found.iter().find(|entry| entry.dn.starts_with("cn=family")).unwrap();
+    assert_eq!(values(group, "member"), ["uid=nyu,ou=people,dc=example,dc=com"], "only themselves");
+    assert_eq!(values(group, "memberUid"), ["nyu"]);
+    assert_eq!(values(group, "gidNumber").len(), 1);
+    // Nobody else, not even through a filter on a group's members.
+    assert!(client.search("(uid=mia)", &[]).await.is_empty());
+    assert!(client.search("(memberUid=mia)", &[]).await.is_empty());
+    client
+        .send(
+            LdapOp::CompareRequest(LdapCompareRequest {
+                dn: "uid=mia,ou=people,dc=example,dc=com".into(),
+                atype: "mail".into(),
+                val: b"mia@example.com".to_vec(),
+            }),
+            vec![],
+        )
+        .await;
+    let LdapOp::CompareResult(result) = client.receive().await.op else { panic!() };
+    assert_eq!(result.code, LdapResultCode::NoSuchObject);
+
+    // An app's account reads everything.
+    let mut app = world.connect();
+    assert_eq!(
+        app.bind("cn=nas,ou=services,dc=example,dc=com", "service password").await.code,
+        LdapResultCode::Success
+    );
+    assert_eq!(app.search("(uid=mia)", &[]).await.len(), 1);
+    assert_eq!(app.search("(cn=secret)", &[]).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_bound_connection_ends_with_the_person_or_the_account() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    world.service("nas", "service password").await;
+    let mut client = world.connect();
+    client.bind("nyu", PASSWORD).await;
+    assert_eq!(client.search("(uid=nyu)", &[]).await.len(), 1);
+    world.state.store.update_person(&nyu, |person| person.disabled = true).await.unwrap();
+    let (_, done) = client.search_with(BASE, LdapSearchScope::Subtree, "(uid=nyu)", &[], vec![]).await;
+    let LdapOp::SearchResultDone(result) = done.op else { panic!() };
+    assert_eq!(result.code, LdapResultCode::InsufficentAccessRights, "disabled: anonymous from now on");
+
+    let mut app = world.connect();
+    app.bind("cn=nas,ou=services,dc=example,dc=com", "service password").await;
+    assert_eq!(app.search("(objectClass=person)", &[]).await.len(), 1);
+    let account = world.state.store.ldap_accounts().await.unwrap().remove(0);
+    world.state.store.delete_ldap_account(&account.id).await.unwrap();
+    let (_, done) = app.search_with(BASE, LdapSearchScope::Subtree, "(objectClass=person)", &[], vec![]).await;
+    let LdapOp::SearchResultDone(result) = done.op else { panic!() };
+    assert_eq!(result.code, LdapResultCode::InsufficentAccessRights, "the account is gone");
+}
+
+#[tokio::test]
+async fn a_filter_with_too_many_extensible_matches_is_refused() {
+    let world = world(true, None).await;
+    world.service("nas", "service password").await;
+    let mut app = world.connect();
+    app.bind("cn=nas,ou=services,dc=example,dc=com", "service password").await;
+    let one = r"(memberOf:1.2.840.113556.1.4.1941:=cn\3dadmins\2cou\3dgroups\2cdc\3dexample\2cdc\3dcom)";
+    let filter = format!("(|{})", one.repeat(40));
+    let (entries, done) = app.search_with(BASE, LdapSearchScope::Subtree, &filter, &[], vec![]).await;
+    let LdapOp::SearchResultDone(result) = done.op else { panic!() };
+    assert!(entries.is_empty());
+    assert_eq!(result.code, LdapResultCode::UnwillingToPerform);
+}
+
+#[tokio::test]
+async fn a_connection_that_never_binds_is_closed_after_half_a_minute() {
+    let world = world(true, None).await;
+    let mut client = world.connect();
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    // Asking for the root DSE now and then does not keep it open.
+    for _ in 0..3 {
+        let (entries, _) = client.search_with("", LdapSearchScope::Base, "(objectClass=*)", &[], vec![]).await;
+        assert_eq!(entries.len(), 1);
+        tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    }
+    assert!(client.framed.next().await.is_none(), "closed");
+    assert!(started.elapsed() >= std::time::Duration::from_secs(30));
+}

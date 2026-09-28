@@ -29,8 +29,9 @@
 #   --ldap                 serve LDAP too, for a NAS, Linux logins and apps without OpenID Connect:
 #                          LDAPS on 636 and LDAP with StartTLS on 389 (plain LDAP only, behind a
 #                          proxy without --ldap-cert). Only ever for your own network.
-#   --ldap-bind ADDRESS    the address of this machine LDAP listens on (default: every address —
-#                          then keep 389 and 636 out of reach from the internet)
+#   --ldap-bind ADDRESS    the address of this machine LDAP listens on: one in your own network.
+#                          Needed with --yes; 0.0.0.0 (every address) only when written out, and
+#                          then 389 and 636 have to be kept from the internet by the router
 #   --ldap-plain           passwords over LDAP without TLS: only where nobody else is on the network
 #   --bind X               where it listens here: a port, or address:port (default 443 with
 #                          --domain, 127.0.0.1:8443 behind a proxy)
@@ -599,15 +600,23 @@ if ! $ldap && $ask && have_tty; then
 
 LDAP
   case "$(askfor "LDAP on? y or n" n)" in y | Y | yes | j | J | ja) ldap=true ;; esac
-  if $ldap && [ -z "$ldap_bind" ]; then
-    ldap_bind=$(askfor "On which address of this machine? (Enter for every address)")
+fi
+if $ldap && [ -z "$ldap_bind" ]; then
+  if ! $ask || ! have_tty; then
+    die "--ldap needs --ldap-bind with the address of this machine in your own network (0.0.0.0 for every address, written out)"
   fi
+  # A private address of this machine, as a suggestion: the one the rest of the home or office
+  # reaches it on.
+  suggested=$(hostname -I 2>/dev/null | tr ' ' '\n' |
+    grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | head -n 1 || true)
+  while [ -z "$ldap_bind" ]; do
+    ldap_bind=$(askfor "On which address of this machine? (0.0.0.0 for every address)" "$suggested")
+  done
 fi
 if $ldap; then
-  if [ -n "$ldap_bind" ]; then
-    valid_ipv4 "$ldap_bind" || [ "$ldap_bind" = 0.0.0.0 ] || die "--ldap-bind wants an IPv4 address of this machine, not $ldap_bind"
-  else
-    ldap_bind=0.0.0.0
+  valid_ipv4 "$ldap_bind" || die "--ldap-bind wants an IPv4 address of this machine, not $ldap_bind"
+  if [ "$ldap_bind" = 0.0.0.0 ]; then
+    warn "LDAP answers on every address of this machine. Docker's ports go past ufw and firewalld: only the router keeps 389 and 636 from the internet"
   fi
   # Without a certificate of its own (behind a proxy), LDAP can only go without TLS.
   if [ -z "$domain" ] && ! $ldap_plain; then

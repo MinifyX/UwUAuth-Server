@@ -26,6 +26,8 @@ try {
   console.log(`Nextcloud signed ${id} in through UwUAuth: ok`);
 } catch (error) {
   console.error(error, 'on', page.url());
+  // What the page said: Nextcloud shows its own errors there.
+  console.error((await page.locator('body').innerText().catch(() => '')).slice(0, 800));
   process.exitCode = 1;
 } finally {
   await browser.close();

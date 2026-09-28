@@ -43,7 +43,19 @@ pub fn stamp_hash(person: &Person) -> String {
     b64(&sha256(person.security_stamp.as_bytes())[..8])
 }
 
-pub async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+pub async fn token(
+    State(state): State<AppState>,
+    crate::session::ClientIp(ip): crate::session::ClientIp,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !state.limits.oauth.check(ip) {
+        return oauth_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "temporarily_unavailable",
+            "too many requests, wait a moment",
+        );
+    }
     let form = form(&body);
     let client = match client(&state, &headers, &form).await {
         Ok(client) => client,
@@ -82,14 +94,21 @@ pub struct Issue<'a> {
     pub auth_time: i64,
     pub amr: Vec<String>,
     pub sid: Option<String>,
-    /// Keep the family of the refresh token this one replaces.
-    pub family: Option<String>,
+    /// The refresh token this one replaces (its hash) and its family, for a refresh.
+    pub replaces: Option<(Vec<u8>, String)>,
     /// Include an ID token.
     pub id_token: bool,
 }
 
-/// Tokens for `issue`, as the token endpoint answers them.
-pub async fn tokens(state: &AppState, issue: Issue<'_>) -> ApiResult<Value> {
+/// What was issued: the token endpoint's answer, and the refresh token's family if there is one.
+pub struct Issued {
+    pub body: Value,
+    pub family: Option<String>,
+}
+
+/// Tokens for `issue`, as the token endpoint answers them. Nothing when the refresh token being
+/// replaced lost its family in the meantime (it was used twice at the same moment).
+pub async fn tokens(state: &AppState, issue: Issue<'_>) -> ApiResult<Option<Issued>> {
     let keys = state.keys().await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let alg = Alg::parse(&issue.app.id_token_alg).unwrap_or(Alg::Rs256);
@@ -135,29 +154,40 @@ pub async fn tokens(state: &AppState, issue: Issue<'_>) -> ApiResult<Value> {
         }
         body["id_token"] = json!(keys.sign(alg, "JWT", &Value::Object(claims)));
     }
+    // Every token belongs to a grant: userinfo and introspection look for it.
+    let grant = state.store.touch_grant(&issue.app.id, &issue.person.id, &scope, false).await?;
+    let mut family = None;
     if issue.app.grant_types.iter().any(|grant| grant == "refresh_token") {
-        let grant = state.store.touch_grant(&issue.app.id, &issue.person.id, &scope, false).await?;
         let refresh = random_token(32);
-        state
-            .store
-            .add_refresh_token(RefreshToken {
-                hash: sha256(refresh.as_bytes()),
-                grant_id: grant.id,
-                family: issue.family.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                scope,
-                stamp: issue.person.security_stamp.clone(),
-                auth_time: issue.auth_time,
-                amr: json!(issue.amr).to_string(),
-                sid: issue.sid.clone(),
-                nonce: issue.nonce.clone(),
-                created: clock::now(),
-                expires: clock::in_seconds(issue.app.refresh_token_days.clamp(1, 3650) * 86_400),
-                used: None,
-            })
-            .await?;
+        let token = RefreshToken {
+            hash: sha256(refresh.as_bytes()),
+            grant_id: grant.id,
+            family: issue
+                .replaces
+                .as_ref()
+                .map_or_else(|| uuid::Uuid::new_v4().to_string(), |(_, family)| family.clone()),
+            scope,
+            stamp: issue.person.security_stamp.clone(),
+            auth_time: issue.auth_time,
+            amr: json!(issue.amr).to_string(),
+            sid: issue.sid.clone(),
+            nonce: issue.nonce.clone(),
+            created: clock::now(),
+            expires: clock::in_seconds(issue.app.refresh_token_days.clamp(1, 3650) * 86_400),
+            used: None,
+        };
+        family = Some(token.family.clone());
+        match &issue.replaces {
+            Some((parent, _)) => {
+                if !state.store.add_refresh_token_after(parent, token).await? {
+                    return Ok(None);
+                }
+            }
+            None => state.store.add_refresh_token(token).await?,
+        }
         body["refresh_token"] = json!(refresh);
     }
-    Ok(body)
+    Ok(Some(Issued { body, family }))
 }
 
 async fn code_grant(
@@ -170,13 +200,24 @@ async fn code_grant(
     let Some(code) = code else {
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "code is missing"));
     };
-    let Some(found): Option<Code> = state.oidc().codes.take(&b64(&sha256(code.as_bytes()))) else {
+    let key = b64(&sha256(code.as_bytes()));
+    let Some(found): Option<Code> = state.oidc().codes.take(&key) else {
+        // A code that comes a second time was stolen: what it gave the first time ends.
+        if let Some(Some(family)) = state.oidc().used_codes.take(&key) {
+            state.store.revoke_family(&family).await?;
+            tracing::warn!(app = client.app.name, "a code came a second time; the tokens it gave are revoked");
+        }
         return Ok(invalid_grant("the code is unknown, used or ran out"));
     };
     if found.app_id != client.app.id {
         return Ok(invalid_grant("the code is for another app"));
     }
-    if redirect_uri.is_some_and(|uri| uri != found.redirect_uri) {
+    // An app that sent redirect_uri with the request sends the same one now (RFC 6749 4.1.3).
+    let redirect_fits = match redirect_uri {
+        Some(uri) => uri == found.redirect_uri,
+        None => !found.redirect_given,
+    };
+    if !redirect_fits {
         return Ok(invalid_grant("redirect_uri is not the one the code was made for"));
     }
     match (&found.code_challenge, verifier) {
@@ -198,7 +239,7 @@ async fn code_grant(
     if refusal(state, &client.app, &person).await?.is_some() {
         return Ok(invalid_grant("the person may not use this app now"));
     }
-    let body = tokens(
+    let issued = tokens(
         state,
         Issue {
             app: &client.app,
@@ -208,12 +249,14 @@ async fn code_grant(
             auth_time: found.auth_time,
             amr: found.amr,
             sid: Some(found.sid),
-            family: None,
+            replaces: None,
             id_token: true,
         },
     )
     .await?;
-    Ok(Json(body).into_response())
+    let Some(issued) = issued else { return Ok(invalid_grant("the grant ended")) };
+    state.oidc().used_codes.put(key, issued.family);
+    Ok(Json(issued.body).into_response())
 }
 
 async fn refresh_grant(
@@ -235,6 +278,16 @@ async fn refresh_grant(
     };
     if grant.app_id != client.app.id {
         return Ok(invalid_grant("the refresh token is for another app"));
+    }
+    // A refresh may ask for less than before, never for more — checked before the token is used
+    // up, so a wrong request costs nothing.
+    let before: Vec<String> = stored.scope.split_whitespace().map(str::to_string).collect();
+    let asked = match scope {
+        Some(scope) => scopes(scope),
+        None => before.clone(),
+    };
+    if asked.iter().any(|scope| !before.contains(scope)) {
+        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_scope", "a refresh cannot widen the scope"));
     }
     let found = match state.store.use_refresh_token(&hash).await? {
         Refresh::Fresh(found) => *found,
@@ -265,16 +318,7 @@ async fn refresh_grant(
         state.store.revoke_family(&found.family).await?;
         return Ok(invalid_grant("the person may not use this app now"));
     }
-    // A refresh may ask for less than before, never for more.
-    let before: Vec<String> = found.scope.split_whitespace().map(str::to_string).collect();
-    let asked = match scope {
-        Some(scope) => scopes(scope),
-        None => before.clone(),
-    };
-    if asked.iter().any(|scope| !before.contains(scope)) {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_scope", "a refresh cannot widen the scope"));
-    }
-    let body = tokens(
+    let issued = tokens(
         state,
         Issue {
             app: &client.app,
@@ -284,12 +328,15 @@ async fn refresh_grant(
             auth_time: found.auth_time,
             amr: serde_json::from_str(&found.amr).unwrap_or_default(),
             sid: found.sid,
-            family: Some(found.family),
+            replaces: Some((hash, found.family)),
             id_token: true,
         },
     )
     .await?;
-    Ok(Json(body).into_response())
+    match issued {
+        Some(issued) => Ok(Json(issued.body).into_response()),
+        None => Ok(invalid_grant("the refresh token was used twice at once; the app has to sign in again")),
+    }
 }
 
 /// A token for the app itself, not for a person: for a service that calls UwUAuth.
@@ -351,14 +398,17 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
             Ok(oauth_error(StatusCode::BAD_REQUEST, "access_denied", "the person said no"))
         }
         DeviceState::Confirmed { person_id, auth_time, amr } => {
-            state.oidc().devices.take(&key);
+            // Taken once: of two polls at the same moment, only one gets the tokens.
+            if state.oidc().devices.take(&key).is_none() {
+                return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code was used"));
+            }
             let Some(person) = state.store.person(&person_id).await? else {
                 return Ok(invalid_grant("the person is gone"));
             };
             if refusal(state, &client.app, &person).await?.is_some() {
                 return Ok(invalid_grant("the person may not use this app now"));
             }
-            let body = tokens(
+            let issued = tokens(
                 state,
                 Issue {
                     app: &client.app,
@@ -368,12 +418,15 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
                     auth_time,
                     amr,
                     sid: None,
-                    family: None,
+                    replaces: None,
                     id_token: true,
                 },
             )
             .await?;
-            Ok(Json(body).into_response())
+            match issued {
+                Some(issued) => Ok(Json(issued.body).into_response()),
+                None => Ok(invalid_grant("the grant ended")),
+            }
         }
     }
 }
@@ -477,6 +530,10 @@ pub async fn introspect(State(state): State<AppState>, headers: HeaderMap, body:
         && stored.expires.as_str() > clock::now().as_str()
         && let Ok(Some(grant)) = state.store.grant_by_id(&stored.grant_id).await
         && grant.app_id == client.app.id
+        // Active means a refresh would work: the person as they were, and still allowed in.
+        && let Ok(Some(person)) = state.store.person(&grant.person_id).await
+        && person.security_stamp == stored.stamp
+        && matches!(refusal(&state, &client.app, &person).await, Ok(None))
     {
         return no_store(
             Json(json!({

@@ -12,7 +12,6 @@ services:
       UWUAUTH_PUBLIC: http://uwuauth:8443
       UWUAUTH_TLS: "off"
       UWUAUTH_UPDATE_CHECK: "off"
-      UWUAUTH_LOGIN_ATTEMPTS: "200"
       UWUAUTH_LDAP_LISTEN: 0.0.0.0:10389
       UWUAUTH_LDAP_PLAIN_BIND: "on"
       UWUAUTH_LDAP_BASE_DN: dc=example,dc=com

@@ -114,20 +114,31 @@ pub fn within_windows(state: &AppState, windows: &[Window], app: Option<&str>) -
     uwuauth_store::access::allowed(&relevant, weekday, minute)
 }
 
-/// Why somebody may not sign in, or nothing.
-pub async fn refusal(state: &AppState, person: &Person) -> ApiResult<Option<&'static str>> {
+/// Why somebody may not sign in at all, or nothing: disabled, in the trash, run out.
+pub async fn refusal(_state: &AppState, person: &Person) -> ApiResult<Option<&'static str>> {
     if person.deleted.is_some() || person.disabled {
         return Ok(Some("disabled"));
     }
     if person.expires.as_deref().is_some_and(|expires| expires <= clock::now().as_str()) {
         return Ok(Some("expired"));
     }
+    Ok(None)
+}
+
+/// Whether passwords for `person` wait a quarter of an hour: too many wrong ones lately.
+///
+/// Only ever for a password from a device the person never signed in on. A passkey, a device
+/// they used before, and the apps they signed in to keep working: otherwise anybody who knows a
+/// name could lock its owner out by typing wrong passwords.
+pub async fn locked(state: &AppState, person: &Person, device: Option<&str>) -> ApiResult<bool> {
+    if let Some(device) = device
+        && state.store.known_device(&person.id, device).await?
+    {
+        return Ok(false);
+    }
     let attempts = i64::from(state.settings().lockout_attempts);
     let failed = state.store.failed_logins_since(&person.id, &clock::in_seconds(-15 * 60)).await?;
-    if failed >= attempts {
-        return Ok(Some("locked"));
-    }
-    Ok(None)
+    Ok(failed >= attempts)
 }
 
 #[cfg(test)]

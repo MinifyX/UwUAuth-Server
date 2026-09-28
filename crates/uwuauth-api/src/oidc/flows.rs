@@ -179,6 +179,7 @@ async fn a_public_app_signs_in_with_pkce_and_gets_verified_tokens() {
     assert_eq!(id_token["sub"], me["id"]);
     assert_eq!((id_token["aud"].as_str(), id_token["nonce"].as_str()), (Some(client_id.as_str()), Some("n-0S6")));
     assert_eq!(id_token["preferred_username"], "admin");
+    assert_eq!(id_token["nickname"], "admin");
     assert_eq!(id_token["groups"], json!(["admins"]));
     assert_eq!(id_token["at_hash"], crate::oidc::keys::half_hash(tokens["access_token"].as_str().unwrap()));
     let (status, info) = userinfo(&server, tokens["access_token"].as_str().unwrap()).await;
@@ -570,8 +571,8 @@ async fn max_age_zero_asks_to_sign_in_again_once() {
     let (client_id, _, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT] })).await;
     let answer = authorize(&admin, &client_id, &[("max_age", "0")]).await;
     let continue_to = param(&answer.replace("/#/login", ""), "continue").unwrap();
-    assert!(continue_to.contains("uwu_after="));
-    assert_eq!(param(&answer.replace("/#/login", ""), "fresh").as_deref(), Some("1"), "the sign-in page asks again");
+    assert!(continue_to.contains("uwu_login="));
+    assert!(answer.contains("fresh=1"), "the sign-in page asks even somebody signed in");
     // Signing in again, then back where the sign-in page sends the browser.
     admin.ok("POST", "/uwu/v1/login", json!({ "login": "admin", "password": PASSWORD })).await;
     let response = admin.get(&continue_to).await;
@@ -652,4 +653,208 @@ async fn changing_an_app_changes_only_what_is_sent() {
     assert_eq!(changed["clientId"], client_id.as_str());
     let changed = admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "public": true })).await;
     assert_eq!((changed["public"].as_bool(), changed["tokenAuthMethod"].as_str()), (Some(true), Some("none")));
+}
+
+// ── What the security review found, fixed ─────────────────
+
+#[tokio::test]
+async fn a_made_up_login_marker_skips_nothing() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, _, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT] })).await;
+    for extra in [
+        &[("prompt", "login"), ("uwu_after", "0")][..],
+        &[("prompt", "login"), ("uwu_login", "made-up")],
+        &[("max_age", "0"), ("uwu_login", "made-up")],
+    ] {
+        let answer = authorize(&admin, &client_id, extra).await;
+        assert!(answer.contains("/#/login"), "{extra:?}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn a_registered_app_asks_first_stays_out_of_my_apps_and_reaches_no_internal_address() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let kid = server.person("kid", false).await;
+    let token = admin.ok("POST", "/uwu/v1/registration-tokens", json!({ "name": "pair", "uses": 3 })).await["secret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let register = |body: Value| {
+        server.send(
+            Request::post("/oauth/register")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+    };
+    let internal = register(json!({ "client_name": "X", "redirect_uris": ["https://app.example.net/cb"], "backchannel_logout_uri": "http://169.254.169.254/latest" })).await;
+    assert_eq!(internal.status(), StatusCode::BAD_REQUEST);
+    let internal = register(json!({ "client_name": "X", "redirect_uris": ["https://app.example.net/cb"], "backchannel_logout_uri": "https://10.0.0.1/logout" })).await;
+    assert_eq!(internal.status(), StatusCode::BAD_REQUEST);
+    let made = json(register(json!({ "client_name": "Nextcloud", "redirect_uris": ["https://app.example.net/cb"], "client_uri": "https://app.example.net/" })).await).await;
+    let client_id = made["client_id"].as_str().unwrap();
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query
+        .append_pair("response_type", "code")
+        .append_pair("client_id", client_id)
+        .append_pair("redirect_uri", "https://app.example.net/cb")
+        .append_pair("scope", "openid");
+    let answer = location(&kid.get(&format!("/oauth/authorize?{}", query.finish())).await);
+    assert!(answer.contains("/#/consent?request="), "{answer}");
+    assert!(kid.json("/uwu/v1/me/apps").await["apps"].as_array().unwrap().is_empty());
+    // Two bad requests did not use the token up: it had three uses.
+    let again = register(json!({ "client_name": "Y", "redirect_uris": ["https://app.example.net/cb"] })).await;
+    assert_eq!(again.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn only_an_id_token_is_a_hint_and_only_a_hint_leads_back() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, _) = app(
+        &admin,
+        json!({ "name": "App", "redirectUris": [REDIRECT], "postLogoutRedirectUris": ["https://app.example.com/bye"] }),
+    )
+    .await;
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let (_, tokens) = token(
+        &server,
+        Some((&client_id, &secret.unwrap())),
+        &[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", REDIRECT)],
+    )
+    .await;
+    let access = tokens["access_token"].as_str().unwrap();
+    let answer = location(
+        &admin
+            .get(&format!(
+                "/oauth/logout?id_token_hint={access}&post_logout_redirect_uri=https%3A%2F%2Fapp.example.com%2Fbye"
+            ))
+            .await,
+    );
+    assert!(answer.contains("/#/logout?request="), "an access token is no hint: {answer}");
+    assert_eq!(admin.get("/uwu/v1/me").await.status(), StatusCode::OK);
+    let stranger = server.browser();
+    let answer = location(
+        &stranger
+            .get(&format!(
+                "/oauth/logout?client_id={client_id}&post_logout_redirect_uri=https%3A%2F%2Fapp.example.com%2Fbye"
+            ))
+            .await,
+    );
+    assert!(answer.ends_with("/#/signed-out"), "no hint, no way back to the app: {answer}");
+}
+
+#[tokio::test]
+async fn a_redirect_uri_sent_before_is_sent_again() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT] })).await;
+    let secret = secret.unwrap();
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let (status, _) =
+        token(&server, Some((&client_id, &secret)), &[("grant_type", "authorization_code"), ("code", &code)]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_device_app_without_refresh_tokens_still_reads_userinfo() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, _, _) = app(
+        &admin,
+        json!({ "name": "TV", "public": true, "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code"] }),
+    )
+    .await;
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_id", &client_id)
+        .append_pair("scope", "openid profile")
+        .finish();
+    let started = json(
+        server
+            .send(
+                Request::post("/oauth/device_authorization")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await,
+    )
+    .await;
+    admin
+        .ok("POST", &format!("/uwu/v1/device/{}", started["user_code"].as_str().unwrap()), json!({ "approve": true }))
+        .await;
+    let poll = [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ("device_code", started["device_code"].as_str().unwrap()),
+        ("client_id", client_id.as_str()),
+    ];
+    let (_, tokens) = token(&server, None, &poll).await;
+    let (status, _) = userinfo(&server, tokens["access_token"].as_str().unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn two_refreshes_at_once_leave_no_token_alive() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT] })).await;
+    let secret = secret.unwrap();
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let (_, first) = token(
+        &server,
+        Some((&client_id, &secret)),
+        &[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", REDIRECT)],
+    )
+    .await;
+    let old = first["refresh_token"].as_str().unwrap().to_string();
+    let pairs = [("grant_type", "refresh_token"), ("refresh_token", old.as_str())];
+    let (a, b) = tokio::join!(
+        token(&server, Some((&client_id, &secret)), &pairs),
+        token(&server, Some((&client_id, &secret)), &pairs)
+    );
+    for (status, body) in [a, b] {
+        if status == StatusCode::OK {
+            let new = body["refresh_token"].as_str().unwrap();
+            let (status, _) =
+                token(&server, Some((&client_id, &secret)), &[("grant_type", "refresh_token"), ("refresh_token", new)])
+                    .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "a copy was used: the whole family ended");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_change_to_an_app_keeps_what_it_does_not_name() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (_, _, id) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT], "allowedGroups": [uwuauth_store::ADMINS_ID], "requireMfa": true, "consent": true })).await;
+    let changed = admin
+        .ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "redirectUris": [REDIRECT, "https://new.example.com/cb"] }))
+        .await;
+    assert_eq!(changed["allowedGroups"], json!([uwuauth_store::ADMINS_ID]));
+    assert_eq!((changed["requireMfa"].as_bool(), changed["consent"].as_bool()), (Some(true), Some(true)));
+    assert_eq!(changed["redirectUris"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_code_that_comes_again_ends_what_it_gave() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT] })).await;
+    let secret = secret.unwrap();
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let exchange = [("grant_type", "authorization_code"), ("code", code.as_str()), ("redirect_uri", REDIRECT)];
+    let (_, first) = token(&server, Some((&client_id, &secret)), &exchange).await;
+    let (status, _) = token(&server, Some((&client_id, &secret)), &exchange).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = token(
+        &server,
+        Some((&client_id, &secret)),
+        &[("grant_type", "refresh_token"), ("refresh_token", first["refresh_token"].as_str().unwrap())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the first refresh token went with the replayed code");
 }

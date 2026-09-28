@@ -97,8 +97,9 @@ impl Store {
         Ok(Self { backend: Arc::new(Backend::Sqlite(sqlite)), generation: Arc::default() })
     }
 
-    /// Counts up with every write. Whatever keeps a copy of the directory compares it to know
-    /// whether its copy is still current.
+    /// Counts up with every write to the directory itself: people, groups, who is in what,
+    /// attributes, pictures, LDAP accounts. Whatever keeps a copy of the directory (LDAP) compares
+    /// it to know whether its copy is still current. Sign-ins, events and the like leave it alone.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
@@ -138,7 +139,7 @@ impl Store {
     /// Once a day: sessions and links that ran out, events older than a year, people in the
     /// trash for 30 days. How many people went for good.
     pub async fn sweep(&self) -> Result<usize> {
-        self.sqlite_write(|tx| {
+        self.directory_write(|tx| {
             let now = clock::now();
             tx.execute("DELETE FROM sessions WHERE expires < ?1", [&now])?;
             tx.execute("DELETE FROM links WHERE expires < ?1 AND purpose != 'invite'", [&now])?;
@@ -221,17 +222,23 @@ impl Store {
         F: FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T> + Send + 'static,
     {
         let backend = self.backend.clone();
-        let generation = self.generation.clone();
-        tokio::task::spawn_blocking(move || {
-            let result = match &*backend {
-                Backend::Sqlite(sqlite) => sqlite.write(change),
-            };
-            generation.fetch_add(1, Ordering::AcqRel);
-            result
+        tokio::task::spawn_blocking(move || match &*backend {
+            Backend::Sqlite(sqlite) => sqlite.write(change),
         })
         .await
         .map_err(|_| StoreError::Gone)?
         .map_err(StoreError::from)
+    }
+
+    /// [`Store::sqlite_write`] for a change to the directory: the generation counts up.
+    pub(crate) async fn directory_write<T, F>(&self, change: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T> + Send + 'static,
+    {
+        let result = self.sqlite_write(change).await;
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        result
     }
 }
 

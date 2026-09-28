@@ -163,6 +163,8 @@ struct Inner {
     connection: RwLock<Option<Connection>>,
     /// In tests: what would have been sent, instead of sending it.
     captured: Option<Mutex<Vec<Sent>>>,
+    /// Told whenever a mail is captured, for tests that wait for one sent in the background.
+    arrived: tokio::sync::Notify,
 }
 
 #[derive(Clone)]
@@ -174,14 +176,26 @@ struct Connection {
 impl Mailer {
     /// A mailer for these settings; none means mail is off.
     pub fn new(settings: Option<&SmtpSettings>) -> Result<Self, MailError> {
-        let mailer = Mailer { inner: Arc::new(Inner { connection: RwLock::new(None), captured: None }) };
+        let mailer = Mailer {
+            inner: Arc::new(Inner {
+                connection: RwLock::new(None),
+                captured: None,
+                arrived: tokio::sync::Notify::new(),
+            }),
+        };
         mailer.configure(settings)?;
         Ok(mailer)
     }
 
     /// A mailer that keeps what it sends in memory, for tests.
     pub fn capturing() -> Self {
-        Mailer { inner: Arc::new(Inner { connection: RwLock::new(None), captured: Some(Mutex::new(Vec::new())) }) }
+        Mailer {
+            inner: Arc::new(Inner {
+                connection: RwLock::new(None),
+                captured: Some(Mutex::new(Vec::new())),
+                arrived: tokio::sync::Notify::new(),
+            }),
+        }
     }
 
     /// New settings, used from the next mail on. None, or settings that are not filled in, turn
@@ -208,6 +222,7 @@ impl Mailer {
         let (subject, text, html) = mail.render(language);
         if let Some(captured) = &self.inner.captured {
             captured.lock().push(Sent { to: to.to_string(), subject, text });
+            self.inner.arrived.notify_waiters();
             return Ok(());
         }
         let Some(connection) = self.inner.connection.read().clone() else {
@@ -228,6 +243,19 @@ impl Mailer {
     /// Everything a capturing mailer was asked to send so far.
     pub fn sent(&self) -> Vec<Sent> {
         self.inner.captured.as_ref().map(|captured| captured.lock().clone()).unwrap_or_default()
+    }
+
+    /// The first mail a capturing mailer captured that `wanted` says yes to, once it is there:
+    /// some mails go out after the answer.
+    pub async fn wait_for(&self, wanted: impl Fn(&Sent) -> bool) -> Sent {
+        loop {
+            // Asked to be told before looking, so a mail between the two is not missed.
+            let arrived = self.inner.arrived.notified();
+            if let Some(mail) = self.sent().into_iter().find(&wanted) {
+                return mail;
+            }
+            arrived.await;
+        }
     }
 }
 

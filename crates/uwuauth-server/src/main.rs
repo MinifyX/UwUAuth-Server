@@ -78,6 +78,18 @@ fn main() -> Result<(), String> {
     unsafe {
         libc::umask(0o077);
     }
+    // Every connection holds a file handle, LDAP's too: as many as the system lets this process
+    // have, not the 1024 a container starts with.
+    #[cfg(unix)]
+    // SAFETY: getrlimit writes into the struct given; setrlimit only raises the soft limit to
+    // the hard one, which any process may do.
+    unsafe {
+        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0 && limit.rlim_cur < limit.rlim_max {
+            limit.rlim_cur = limit.rlim_max;
+            libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+        }
+    }
     // The newest lines also stay in memory, for the admin portal.
     let logs = uwuauth_api::LogBuffer::new(5000);
     tracing_subscriber::registry()

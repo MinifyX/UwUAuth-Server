@@ -47,9 +47,9 @@ pub struct Params {
     pub response_mode: Option<String>,
     pub request: Option<String>,
     pub request_uri: Option<String>,
-    /// Set by this server when it sent somebody to sign in again: only a sign-in after this
-    /// time counts.
-    pub uwu_after: Option<i64>,
+    /// Set by this server when it sent somebody to sign in again: the id of what it remembers
+    /// about that. Only a sign-in after the time it remembers counts. A made-up id is nothing.
+    pub uwu_login: Option<String>,
 }
 
 /// A request that waits for somebody to agree.
@@ -63,6 +63,9 @@ pub struct Request {
     pub nonce: Option<String>,
     pub code_challenge: Option<String>,
     pub form_post: bool,
+    /// The app sent `redirect_uri` (it may leave it out with one registered); then the token
+    /// request has to send the same one.
+    pub redirect_given: bool,
     pub sid: String,
     pub auth_time: i64,
     pub amr: Vec<String>,
@@ -74,6 +77,7 @@ pub struct Code {
     pub app_id: String,
     pub person_id: String,
     pub redirect_uri: String,
+    pub redirect_given: bool,
     pub scopes: Vec<String>,
     pub nonce: Option<String>,
     pub code_challenge: Option<String>,
@@ -240,6 +244,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
     let Some(app) = state.store.app_by_client_id(params.client_id.trim()).await?.filter(|app| !app.disabled) else {
         return Ok(page(state, "oauth-error", &[("reason", "unknown_app")]));
     };
+    let redirect_given = params.redirect_uri.as_deref().is_some_and(|uri| !uri.is_empty());
     let redirect_uri = match params.redirect_uri.as_deref().filter(|uri| !uri.is_empty()) {
         Some(uri) if redirect_matches(&app.redirect_uris, uri) => uri.to_string(),
         Some(_) => return Ok(page(state, "oauth-error", &[("reason", "redirect"), ("app", &app.name)])),
@@ -295,11 +300,12 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
     let me = from_headers(state, headers, ip).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let max_age: Option<i64> = params.max_age.as_deref().and_then(|age| age.trim().parse().ok());
+    // Back from signing in again: when this server sent the browser off, and that only once.
+    let after = params.uwu_login.as_deref().and_then(|id| state.oidc().logins.take(id));
     let signed_in = me.as_ref().filter(|me| {
         let auth_time = uwuauth_store::clock::parse(&me.session.auth_time).map_or(0, |at| at.unix_timestamp());
-        // Back from signing in again, the new sign-in is what counts; `max_age` and
-        // `prompt=login` are answered by it.
-        let recent = match params.uwu_after {
+        // The new sign-in is what counts; `max_age` and `prompt=login` are answered by it.
+        let recent = match after {
             Some(after) => auth_time >= after,
             // `max_age=0` means now: always again.
             None => max_age.is_none_or(|age| now - auth_time < age) && !prompts.contains(&"login"),
@@ -341,7 +347,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
         if prompts.contains(&"none") {
             return refuse("interaction_required", "this app needs a second factor");
         }
-        let continue_to = format!("/oauth/authorize?{}", without(&query, &["uwu_after"]));
+        let continue_to = format!("/oauth/authorize?{}", without(&query, &["uwu_login"]));
         return Ok(page(state, "denied", &[("reason", "mfa"), ("app", &app.name), ("continue", &continue_to)]));
     }
 
@@ -356,6 +362,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
         nonce: params.nonce.clone(),
         code_challenge: challenge,
         form_post,
+        redirect_given,
         sid,
         auth_time,
         amr,
@@ -387,14 +394,15 @@ fn without(query: &str, names: &[&str]) -> String {
 }
 
 /// Off to the sign-in page, which sends the browser back here afterwards. `again`: a sign-in that
-/// happened before now does not count (for `prompt=login`, `max_age`, or a session that has to
-/// set up a second factor first).
+/// happened before now does not count (for `prompt=login`, `max_age`, or a sign-in that is too
+/// old). The sign-in page then asks even somebody who is signed in (`fresh=1`).
 fn to_login(state: &AppState, query: &str, again: bool, now: i64) -> Response {
-    let mut back = without(query, &["prompt", "uwu_after"]);
+    let mut back = without(query, &["prompt", "uwu_login"]);
     if again {
-        back.push_str(&format!("&uwu_after={now}"));
-        // `fresh`: the sign-in page asks even when somebody is signed in already — sending them
-        // straight on would only bring them back here.
+        let id = crate::crypto::random_token(18);
+        if state.oidc().logins.put(id.clone(), now) {
+            back.push_str(&format!("&uwu_login={id}"));
+        }
         return page(state, "login", &[("continue", &format!("/oauth/authorize?{back}")), ("fresh", "1")]);
     }
     page(state, "login", &[("continue", &format!("/oauth/authorize?{back}"))])
@@ -428,6 +436,7 @@ async fn make_code(state: &AppState, app: &App, request: &Request, consented: bo
             app_id: app.id.clone(),
             person_id: request.person_id.clone(),
             redirect_uri: request.redirect_uri.clone(),
+            redirect_given: request.redirect_given,
             scopes: request.scopes.clone(),
             nonce: request.nonce.clone(),
             code_challenge: request.code_challenge.clone(),

@@ -31,10 +31,11 @@ for a family first and a small office second, and built so that a company would 
   you pass on a changed version, or run one for others, its source stays open too.
 - **No support.** Issues and pull requests are okay, but I might answer late or not at all.
 
-> **Status: 0.0.x, the frame.** The server runs, serves its page, backs itself up and updates
-> itself, and CI builds, tests and publishes it. There are no people in it yet: user management
-> is the next step (0.1), and the protocols come one after another after that. The
-> [plan](docs/plan.md) has every step (in German).
+> **Status: 0.3 beta.** People, groups, passkeys, two-step login, invitations, kids' accounts,
+> the self-service and admin portal (0.1), signing in to apps with OpenID Connect (0.2), and LDAP
+> in Active Directory's dialect for a NAS, Linux logins and older apps (0.3). A beta: try it at
+> home, not yet for the only way into something important. Pairing with the UwUSuite is next.
+> The [plan](docs/plan.md) has every step (in German).
 
 ## What it will do
 
@@ -56,8 +57,10 @@ for a family first and a small office second, and built so that a company would 
 - **Be a Windows domain controller.** LDAP in Active Directory's dialect, yes. Joining Windows
   PCs to a domain, Kerberos, NTLM and group policies, no — that is what Samba is for.
 - **Talk to anybody behind your back.** No telemetry. The only connections it opens on its own
-  are Let's Encrypt (if you use it), your mail server, and a daily look at GitHub for a newer
-  release, which `UWUAUTH_UPDATE_CHECK=off` stops.
+  are Let's Encrypt (if you use it), your mail server, a daily look at GitHub for a newer
+  release (`UWUAUTH_UPDATE_CHECK=off` stops it), the sign-out notices apps ask for, and — only
+  if an admin turns it on — Have I Been Pwned, which gets the first five characters of a
+  password's SHA-1 hash and never the password.
 
 ## Install
 
@@ -69,15 +72,18 @@ curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/latest/download/i
 sudo bash install.sh
 ```
 
-It installs Docker when it is missing, asks whether the server gets its own certificate from
+While 0.3 is a beta, add `--version beta`. It installs Docker when it is missing, asks whether the server gets its own certificate from
 Let's Encrypt or sits behind your proxy, sets up `/opt/uwuauth` and starts it. Without questions:
 
 ```bash
-sudo bash install.sh --domain auth.example.com --yes
+sudo bash install.sh --domain auth.example.com --admin you@example.com --yes
 sudo bash install.sh --behind-proxy https://auth.example.com --yes
 # the proxy runs as a container here: the server joins its Docker network
 sudo bash install.sh --behind-proxy https://auth.example.com --proxy-network proxy --yes
 ```
+
+`--admin` prints the link to make the first admin's account with. LDAP is off unless asked for
+(`--ldap --ldap-bind <an address in your network>`).
 
 [docs/deployment.md](docs/deployment.md) has the rest: Caddy and nginx in front, your own
 certificate, backups, every setting.
@@ -97,13 +103,16 @@ version.
 | Path                    | What lives there                                                          |
 | ----------------------- | ------------------------------------------------------------------------- |
 | `crates/uwuauth-store`  | The database: SQLite now, behind methods PostgreSQL can implement later    |
-| `crates/uwuauth-api`    | HTTP: UwUAuth's own API under `/uwu/v1`, later OIDC, SAML, SCIM, forward auth |
+| `crates/uwuauth-api`    | HTTP: UwUAuth's own API under `/uwu/v1`, OpenID Connect and OAuth 2; later SAML, SCIM, forward auth |
+| `crates/uwuauth-ldap`   | LDAP, in the dialects of OpenLDAP and Active Directory at once             |
+| `crates/uwuauth-mail`   | Mail: SMTP and the templates, in German and English                        |
 | `crates/uwuauth-web`    | The web app's files, embedded into the binary                              |
 | `crates/uwuauth-server` | The program: settings, TLS and Let's Encrypt, commands, backups, updates  |
 | `web/`                  | The web app (React): sign-in pages, self-service and admin portal          |
 | `docker/`, `compose.yaml`, `install.sh`, `update.sh` | The container and how it gets onto a machine |
 | `brand/`                | Nyu, as an ID badge                                                        |
-| `docs/`                 | Plan, deployment                                                           |
+| `docs/`                 | Plan, deployment, admin API, OpenID Connect, LDAP, the security review     |
+| `scripts/`              | The browser test, and real apps (SSSD, Grafana, Forgejo, Nextcloud) in Docker |
 
 ## Development
 
@@ -113,8 +122,7 @@ Requirements: Rust stable, and Node 24 with pnpm for the web app. Docker for the
 # the server, with a data directory next to the checkout
 cargo run -p uwuauth-server
 
-# the web app, built into the next cargo build (touch crates/uwuauth-web/build.rs after the
-# first build so cargo notices), or served by Vite against the running server
+# the web app, built into the next cargo build, or served by Vite against the running server
 cd web && pnpm install && pnpm build
 cd web && pnpm dev
 

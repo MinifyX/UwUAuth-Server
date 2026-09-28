@@ -70,7 +70,12 @@ fn normalize(typed: &str) -> String {
 }
 
 /// `/oauth/device_authorization`.
-pub async fn start(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+pub async fn start(State(state): State<AppState>, ClientIp(ip): ClientIp, headers: HeaderMap, body: Bytes) -> Response {
+    // Anybody who knows a public app's id may ask: each one is kept for ten minutes, so they are
+    // counted per address, and there is a ceiling on how many wait at once.
+    if !state.limits.anonymous.check(ip) {
+        return oauth_error(StatusCode::TOO_MANY_REQUESTS, "slow_down", "too many device codes, wait a minute");
+    }
     let form = form(&body);
     let client = match client(&state, &headers, &form).await {
         Ok(client) => client,
@@ -82,7 +87,7 @@ pub async fn start(State(state): State<AppState>, headers: HeaderMap, body: Byte
     let scope = form.iter().find(|(key, _)| key == "scope").map(|(_, value)| value.as_str()).unwrap_or_default();
     let device_code = random_token(32);
     let user_code = user_code();
-    state.oidc().devices.put(
+    let kept = state.oidc().devices.put(
         b64(&sha256(device_code.as_bytes())),
         DeviceGrant {
             app_id: client.app.id.clone(),
@@ -92,6 +97,13 @@ pub async fn start(State(state): State<AppState>, headers: HeaderMap, body: Byte
             last_poll: None,
         },
     );
+    if !kept {
+        return oauth_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "temporarily_unavailable",
+            "too many devices are waiting, try later",
+        );
+    }
     let page = format!("{}/#/device", issuer(&state));
     open_to_all(
         Json(json!({

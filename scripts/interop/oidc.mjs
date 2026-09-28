@@ -42,10 +42,15 @@ try {
   check('Grafana made an admin of an admin', orgs.some((org) => org.role === 'Admin'), JSON.stringify(orgs));
 
   // Forgejo: signed in at UwUAuth already, so straight through.
+  // Back at Forgejo once the round trip through UwUAuth is over: not on the address that starts it.
   await page.goto('http://forgejo:3000/user/oauth2/uwuauth');
-  await page.waitForURL((url) => url.href.startsWith('http://forgejo:3000/'));
-  const forgejoUser = await (await context.request.get('http://forgejo:3000/api/v1/user')).json();
-  check('Forgejo knows who signed in', forgejoUser.login === user || forgejoUser.email === `${user}@example.com`, JSON.stringify(forgejoUser));
+  await page.waitForURL(
+    (url) => url.origin === 'http://forgejo:3000' && !url.pathname.startsWith('/user/oauth2/'),
+  );
+  // Forgejo's API wants a token, not the browser's session: its settings page says who it is.
+  await page.goto('http://forgejo:3000/user/settings');
+  const forgejoName = await page.locator('input[name="name"]').inputValue().catch(() => '');
+  check('Forgejo knows who signed in', forgejoName === user, `${page.url()} shows "${forgejoName}"`);
 } catch (error) {
   console.error(error);
   await page.screenshot({ path: '/tmp/interop-failure.png' }).catch(() => {});

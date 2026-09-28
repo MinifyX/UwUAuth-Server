@@ -69,6 +69,11 @@ pub struct Pending {
     pub logouts: Expiring<logout::LogoutRequest>,
     /// Answers for apps that want them posted, waiting for the browser to fetch the page.
     pub answers: Expiring<authorize::FormAnswer>,
+    /// When this server sent somebody to sign in again, by the id it gave the sign-in page.
+    pub logins: Expiring<i64>,
+    /// Codes that were used, with the refresh family they started: a code that comes again was
+    /// stolen, and what it gave the first time ends (RFC 6749 section 4.1.2).
+    pub used_codes: Expiring<Option<String>>,
 }
 
 impl Default for Pending {
@@ -79,6 +84,8 @@ impl Default for Pending {
             devices: Expiring::new(Duration::from_secs(device::DEVICE_SECONDS)),
             logouts: Expiring::new(Duration::from_secs(10 * 60)),
             answers: Expiring::new(Duration::from_secs(60)),
+            logins: Expiring::new(Duration::from_secs(30 * 60)),
+            used_codes: Expiring::new(Duration::from_secs(10 * 60)),
         }
     }
 }

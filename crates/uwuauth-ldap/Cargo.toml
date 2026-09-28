@@ -29,7 +29,7 @@ rcgen.workspace = true
 tempfile.workspace = true
 ldap3_proto.workspace = true
 futures-util.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tokio-util.workspace = true
 tokio-rustls.workspace = true
 rustls.workspace = true

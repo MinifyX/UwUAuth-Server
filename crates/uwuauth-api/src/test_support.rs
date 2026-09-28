@@ -81,6 +81,16 @@ impl TestServer {
     pub(crate) fn mail_to(&self, to: &str) -> Option<uwuauth_mail::Sent> {
         self.state.mailer.sent().into_iter().rev().find(|mail| mail.to == to)
     }
+
+    /// The link from the mail to `to` with `part` in it, waiting for it: some mails go out after
+    /// the answer.
+    pub(crate) async fn link_to(&self, to: &str, part: &str) -> String {
+        let wanted = |mail: &uwuauth_mail::Sent| mail.to == to && mail.link().is_some_and(|link| link.contains(part));
+        let mail = tokio::time::timeout(std::time::Duration::from_secs(10), self.state.mailer.wait_for(wanted))
+            .await
+            .expect("the mail comes");
+        mail.link().unwrap().to_string()
+    }
 }
 
 pub(crate) const PASSWORD: &str = "correct horse battery";

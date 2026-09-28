@@ -21,8 +21,12 @@ LDAP is off unless asked for, and it is **for your own network only**: 389 and 6
 reachable from the internet.
 
 ```bash
-sudo bash install.sh --domain auth.example.com --ldap --ldap-bind 192.168.1.10 --yes
+sudo bash install.sh --domain auth.example.com --ldap --ldap-bind 192.0.2.10 --yes
 ```
+
+`--ldap-bind` is the address of this machine in your own network. `0.0.0.0` (every address) has to
+be written out: Docker's published ports go past ufw and firewalld, so then only the router keeps
+LDAP from the internet.
 
 or later, by hand, in `.env`:
 
@@ -37,8 +41,8 @@ and in `compose.override.yaml` next to `compose.yaml` (update.sh leaves it alone
 services:
   uwuauth:
     ports:
-      - "192.168.1.10:389:10389"
-      - "192.168.1.10:636:10636"
+      - "192.0.2.10:389:10389"
+      - "192.0.2.10:636:10636"
 ```
 
 then `docker compose up -d`. Apps in the same Docker network reach `uwuauth:10389` without any
@@ -70,15 +74,34 @@ The base DN comes from the server's name — `auth.example.com` gives `dc=exampl
   the whole directory, and change nothing.
 - **People** bind with their own password or with an **app password** (made in the self-service
   portal under *Security*). A group can say that for its members only app passwords count over
-  LDAP (*For LDAP only app passwords*). The name can be written however the app writes it:
+  LDAP (*For LDAP only app passwords*); a group that wants a second step does the same, since LDAP
+  has no way to ask for one. The name can be written however the app writes it:
   `uid=nyu,ou=people,dc=example,dc=com`, `nyu`, `nyu@example.com` (the user principal name, or
   the address), `EXAMPLE\nyu`.
 - **Anonymous** clients only see the root DSE (`namingContexts` and what the server can do).
 
+What a bind may read:
+
+| Bound as | Sees |
+| --- | --- |
+| an app's account | everything below, all of it; changes nothing |
+| a person | the base, the three containers, their own entry, and the groups they are in — of those only `cn`, `sAMAccountName`, `description`, `gidNumber` and the ids, and among the members only themselves |
+| nobody | the root DSE |
+
+So an app that checks a password by binding as the person, and then reads that person's entry
+and groups, finds what it needs; to list everybody, an app needs an account of its own.
+
 A refused bind answers like Active Directory, so apps that read the reason understand it:
-`data 52e` wrong name or password, `533` disabled, `701` run out, `775` locked for a quarter of an
-hour after too many wrong passwords, `530` outside the person's time window. Every bind of a
-person counts against the same limits as signing in on the web, and goes into the event log.
+`data 52e` wrong name or password, `533` disabled, `701` run out, `530` outside the person's time
+window. After too many wrong passwords (the same count as on the web) the account password is
+turned away for a quarter of an hour with `52e` like a wrong one, so whoever is guessing learns
+nothing; app passwords go on working. Wrong binds count per address too, and every bind goes into
+the event log.
+
+Whoever is bound is looked at again on every request: once a person is disabled, changes their
+password or is signed out everywhere, or an app's account is deleted, the connection is anonymous.
+A connection has 30 seconds to bind; one that is bound is closed after five idle minutes. At most
+512 connections are open at once, 64 from one address.
 
 ## What apps see
 
@@ -96,7 +119,7 @@ person counts against the same limits as signing in on the web, and goes into th
 | `memberOf` | the groups they are in directly, and `everyone` |
 | `objectGUID`, `objectSid` | the id, the way Windows writes it; the SID is `S-1-5-21-…-<uidNumber>` |
 | `userAccountControl` | `512`, or `514` when disabled |
-| `jpegPhoto`, `thumbnailPhoto` | the picture, when asked for by name |
+| `jpegPhoto`, `thumbnailPhoto` | the picture, when asked for by name (filters do not see it) |
 | `entryUUID`, `createTimestamp`, `modifyTimestamp` | when asked for by name, or with `+` |
 | your attributes | each under its name |
 
@@ -110,6 +133,8 @@ Active Directory's matching rules are understood:
 - `(memberOf:1.2.840.113556.1.4.1941:=cn=Familie,ou=groups,dc=example,dc=com)` — everybody in a
   group, through groups inside it too;
 - `(!(userAccountControl:1.2.840.113556.1.4.803:=2))` — only those not disabled.
+
+A filter may hold at most 32 such extensible matches.
 
 Searches return at most 10,000 entries; paged results (RFC 2696) page through more.
 
@@ -153,8 +178,9 @@ account, mode LDAPS.
 
 ## Passwords
 
-People can change their own password over LDAP — with the old one, and only over TLS (or where
-plain binds are allowed):
+People can change their own password over LDAP — bound with their own password (not an app
+password), with the old one, and only over TLS (or where plain binds are allowed). A wrong old
+password counts like a wrong password at signing in. Two ways are understood:
 
 - the Password Modify operation (RFC 3062), as `ldappasswd` sends it;
 - Active Directory's way: a modify that deletes the old `unicodePwd` and adds the new one.

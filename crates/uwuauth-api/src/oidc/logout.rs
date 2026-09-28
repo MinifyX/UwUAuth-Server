@@ -65,15 +65,25 @@ pub async fn logout_post(
 }
 
 async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params) -> ApiResult<Response> {
-    // The hint says who and which app; it may have run out, it only has to be ours.
+    // The hint says who and which app. It may have run out, but it has to be an ID token of this
+    // server: not an access token, not a logout token, and for the app `client_id` names.
     let keys = state.keys().await?;
-    let hint = params.id_token_hint.as_deref().and_then(|token| keys.verify(token)).map(|(_, claims)| claims);
-    let hint_app = hint.as_ref().and_then(|claims| claims.get("aud")).and_then(Value::as_str).map(str::to_string);
-    let client_id = hint_app.or(params.client_id.clone());
-    let app = match &client_id {
+    let hint = params.id_token_hint.as_deref().and_then(|token| keys.verify(token)).and_then(|(header, claims)| {
+        let typ = header.get("typ").and_then(Value::as_str);
+        let id_token = typ.is_none_or(|typ| typ == "JWT")
+            && claims.get("events").is_none()
+            && claims.get("client_id").is_none()
+            && claims.get("iss").and_then(Value::as_str) == Some(issuer(state).as_str());
+        let aud = claims.get("aud").and_then(Value::as_str);
+        let same_app = params.client_id.as_deref().is_none_or(|client_id| aud == Some(client_id));
+        (id_token && aud.is_some() && same_app).then_some(claims)
+    });
+    let app = match hint.as_ref().and_then(|claims| claims.get("aud")).and_then(Value::as_str) {
         Some(id) => state.store.app_by_client_id(id).await?,
         None => None,
     };
+    // Back to the app only with a hint: otherwise any link could send people through here to
+    // wherever an app registered.
     let redirect = params.post_logout_redirect_uri.as_deref().and_then(|uri| {
         let app = app.as_ref()?;
         app.post_logout_redirect_uris.iter().any(|known| known == uri).then(|| with_state(uri, params.state.as_deref()))
@@ -85,10 +95,8 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params) 
             Redirect::to(&redirect.unwrap_or_else(|| format!("{}/#/signed-out", state.config.public))).into_response()
         );
     };
-    let hint_matches = hint.as_ref().is_some_and(|claims| {
-        claims.get("iss").and_then(Value::as_str) == Some(issuer(state).as_str())
-            && claims.get("sub").and_then(Value::as_str) == Some(me.person.id.as_str())
-    });
+    let hint_matches =
+        hint.as_ref().is_some_and(|claims| claims.get("sub").and_then(Value::as_str) == Some(me.person.id.as_str()));
     if hint_matches {
         end(state, &me.session.id, &me.person.id, ip).await?;
         let clear = set_cookie(state, SESSION_COOKIE, "", Some(0));
@@ -188,10 +196,30 @@ pub async fn backchannel(state: &AppState, sid: &str, person: &str) -> ApiResult
         let Some(uri) = app.backchannel_logout_uri.clone() else { continue };
         let token = logout_token(state, keys, &app, person, sid);
         let name = app.name.clone();
+        // An app that registered itself is nobody's to trust with the network behind this server:
+        // its address has to be a public one, and the request goes to exactly that address.
+        let registered = app.template.as_deref() == Some(super::register::REGISTERED);
         tokio::spawn(async move {
+            let http = if registered {
+                match public_target(&uri).await {
+                    Some((host, address)) => match pinned_client(&host, address) {
+                        Some(client) => client,
+                        None => return,
+                    },
+                    None => {
+                        tracing::warn!(
+                            app = name,
+                            "a registered app's back-channel address is not a public one; not sent"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                client().clone()
+            };
             let body =
                 url::form_urlencoded::Serializer::new(String::new()).append_pair("logout_token", &token).finish();
-            let sent = client()
+            let sent = http
                 .post(&uri)
                 .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(body)
@@ -211,6 +239,63 @@ pub async fn backchannel(state: &AppState, sid: &str, person: &str) -> ApiResult
     Ok(())
 }
 
+/// Whether an address is one of the internet's: not this machine, not a private network, not
+/// link-local (cloud metadata lives there).
+pub fn public_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            !(ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || ip.is_multicast()
+                || ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64
+                || ip.octets()[0] == 0)
+        }
+        std::net::IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(|v4| !public_ip(std::net::IpAddr::V4(v4))))
+        }
+    }
+}
+
+/// The host of `uri` and a public address it resolves to, if every address it resolves to is
+/// public.
+async fn public_target(uri: &str) -> Option<(String, std::net::SocketAddr)> {
+    let url = url::Url::parse(uri).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let host = url.host_str()?.trim_start_matches('[').trim_end_matches(']').to_string();
+    let port = url.port_or_known_default()?;
+    let addresses: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port)).await.ok()?.collect();
+    (!addresses.is_empty() && addresses.iter().all(|address| public_ip(address.ip()))).then(|| (host, addresses[0]))
+}
+
+/// A client that goes to `address` for `host`, whatever the name resolves to by then.
+fn pinned_client(host: &str, address: std::net::SocketAddr) -> Option<reqwest::Client> {
+    let roots: rustls::RootCertStore = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
+    let tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .ok()?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
+        .user_agent("UwUAuth-Server")
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(host, address)
+        .build()
+        .ok()
+}
+
 fn logout_token(state: &AppState, keys: &super::keys::Keys, app: &App, person: &str, sid: &str) -> String {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let alg = Alg::parse(&app.id_token_alg).unwrap_or(Alg::Rs256);
@@ -228,4 +313,28 @@ fn logout_token(state: &AppState, keys: &super::keys::Keys, app: &App, person: &
             "events": { "http://schemas.openid.net/event/backchannel-logout": {} },
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_the_internet_is_public() {
+        for private in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "192.168.1.2",
+            "169.254.169.254",
+            "100.64.0.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+            "0.0.0.0",
+        ] {
+            assert!(!super::public_ip(private.parse().unwrap()), "{private}");
+        }
+        for public in ["192.0.2.1", "2001:db8::1"] {
+            assert!(super::public_ip(public.parse().unwrap()), "{public}");
+        }
+    }
 }
