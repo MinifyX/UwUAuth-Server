@@ -72,7 +72,15 @@ curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/latest/download/i
 sudo bash install.sh
 ```
 
-While 0.3 is a beta, add `--version beta`. It installs Docker when it is missing, asks whether the server gets its own certificate from
+While 0.3 is a beta, the newest `install.sh` is the beta's (`latest` still points to 0.0.1,
+which knows neither `--admin` nor `--ldap`):
+
+```bash
+curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/download/v0.3.0-beta.1/install.sh
+sudo bash install.sh --version beta
+```
+
+It installs Docker when it is missing, asks whether the server gets its own certificate from
 Let's Encrypt or sits behind your proxy, sets up `/opt/uwuauth` and starts it. Without questions:
 
 ```bash
