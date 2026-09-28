@@ -155,3 +155,22 @@ export function Loading() {
     </p>
   );
 }
+
+/** A value to copy — a client ID, an address: shown whole, with a button. */
+export function CopyField({ value, label }: { value: string; label: string }) {
+  useLanguage();
+  return (
+    <div className="copy-field">
+      <code>{value}</code>
+      <button
+        type="button"
+        onClick={() => void copy(value)}
+        aria-label={t('{what} kopieren', { what: label })}
+        title={t('{what} kopieren', { what: label })}
+      >
+        <Icon name="copy" />
+        <span className="copy-label">{t('Kopieren')}</span>
+      </button>
+    </div>
+  );
+}

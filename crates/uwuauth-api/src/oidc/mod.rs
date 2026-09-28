@@ -67,6 +67,8 @@ pub struct Pending {
     pub devices: Expiring<device::DeviceGrant>,
     /// Sign-outs an app asked for that wait for the person to confirm them.
     pub logouts: Expiring<logout::LogoutRequest>,
+    /// Answers for apps that want them posted, waiting for the browser to fetch the page.
+    pub answers: Expiring<authorize::FormAnswer>,
 }
 
 impl Default for Pending {
@@ -76,6 +78,7 @@ impl Default for Pending {
             consents: Expiring::new(Duration::from_secs(10 * 60)),
             devices: Expiring::new(Duration::from_secs(device::DEVICE_SECONDS)),
             logouts: Expiring::new(Duration::from_secs(10 * 60)),
+            answers: Expiring::new(Duration::from_secs(60)),
         }
     }
 }

@@ -8,11 +8,17 @@
 // link and sets it up in a second browser with a password, adds the authenticator app, signs
 // out and in again with the passkey, and opens every page of the admin portal.
 //
+// Then OpenID Connect, with no app needed: an app from the generic template that asks for
+// consent, a sign-in to it with PKCE (its redirect address is caught in the browser, the code
+// exchanged for tokens here), "My apps" with the grant and taking it back, signing in again for
+// an app that asks for it (`prompt=login`), a TV that connects with a code typed in the browser,
+// the pages for refusals and broken apps, and signing out from an app.
+//
 // Runs in the Playwright image (mcr.microsoft.com/playwright). Passkeys come from Chrome's
 // virtual authenticator. Exits non-zero on the first failure, with a screenshot of every open
 // page in the screenshot dir; E2E_SHOTS=1 keeps one of every step too.
 
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -69,7 +75,7 @@ async function newBrowser(name) {
   page.setDefaultTimeout(15_000);
   const cdp = await context.newCDPSession(page);
   await cdp.send('WebAuthn.enable', { enableUI: false });
-  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+  const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
     options: {
       protocol: 'ctap2',
       transport: 'internal',
@@ -79,9 +85,35 @@ async function newBrowser(name) {
       automaticPresenceSimulation: true,
     },
   });
+  // The virtual authenticator answers the passkey offer in the sign-in page's name field at
+  // once, where a real browser waits for a pick. Off, the sign-in page stays until switched on.
+  page.presence = (enabled) =>
+    cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled });
   page.on('pageerror', (error) => console.error(`[${name}] page error: ${error.message}`));
   pages.push({ name, page });
   return page;
+}
+
+/** A form POST to the server, from here (as an app would), as JSON. */
+async function post(path, form, basic) {
+  const headers = { 'content-type': 'application/x-www-form-urlencoded' };
+  if (basic) {
+    const [id, secret] = basic.map(encodeURIComponent);
+    headers.authorization = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
+  }
+  const response = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams(form),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(`${path}: ${response.status} ${JSON.stringify(body)}`);
+  return body;
+}
+
+/** A JWT's claims, unchecked: the server's tests check signatures, this only reads. */
+function claims(jwt) {
+  return JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
 }
 
 /** A page's title is there: the page loaded and drew. */
@@ -135,7 +167,8 @@ async function run() {
   await inviteDialog.getByLabel('Name (freiwillig)').fill('Mama Neko');
   await inviteDialog.getByRole('button', { name: 'Link erstellen' }).click();
   const invitation = await admin.locator('.copy-field code').innerText();
-  if (!invitation.includes('/#/invite?token=')) throw new Error(`no invitation link: ${invitation}`);
+  if (!invitation.includes('/#/invite?token='))
+    throw new Error(`no invitation link: ${invitation}`);
   await shot(admin, 'invitation');
   await admin.getByRole('dialog').getByRole('button', { name: 'Fertig' }).click();
   await admin.getByText('Mama Neko').waitFor();
@@ -182,12 +215,17 @@ async function run() {
   await admin.getByRole('heading', { name: 'Deine Wiederherstellungscodes' }).waitFor();
   await shot(admin, 'recovery-codes');
   await admin.getByRole('button', { name: 'Aufgeschrieben – fertig' }).click();
-  await admin.locator('.section', { hasText: 'Authenticator-App' }).getByText('Eingerichtet').waitFor();
+  await admin
+    .locator('.section', { hasText: 'Authenticator-App' })
+    .getByText('Eingerichtet')
+    .waitFor();
 
   // ── Out, and in again with the passkey ──
+  await admin.presence(false);
   await admin.getByRole('button', { name: 'Abmelden' }).click();
   await title(admin, 'Anmelden');
   await shot(admin, 'signed-out');
+  await admin.presence(true);
   // Chrome's virtual authenticator answers the passkey offer in the name field at once, where a
   // real browser waits for a pick: either way the passkey signs in.
   const passkeyButton = admin.getByRole('button', { name: 'Mit Passkey anmelden' });
@@ -201,6 +239,7 @@ async function run() {
     ['people', 'Personen'],
     ['groups', 'Gruppen'],
     ['invitations', 'Einladungen'],
+    ['apps', 'Apps'],
     ['attributes', 'Zusätzliche Felder'],
     ['settings', 'Einstellungen'],
     ['events', 'Ereignisse'],
@@ -217,6 +256,230 @@ async function run() {
   // The event log tells what happened, in sentences.
   await admin.goto(`${base}/admin#/events`);
   await admin.getByText('Nyu Neko hat UwUAuth eingerichtet.').waitFor();
+
+  await oidc(admin);
+}
+
+/** OpenID Connect, end to end, with the admin's browser as the person and this script as the app. */
+async function oidc(admin) {
+  const callback = 'http://localhost:18744/cb';
+  // Nothing listens there: the browser's request is answered here, and the address it went to
+  // carries the answer.
+  await admin.route('http://localhost:18744/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Die App</h1>' }),
+  );
+
+  // ── An app from the generic template that asks first ──
+  await admin.goto(`${base}/admin#/apps`);
+  await title(admin, 'Apps');
+  await admin.getByRole('button', { name: 'Neue App' }).click();
+  await title(admin, 'Neue App');
+  await shot(admin, 'admin-app-templates');
+  await admin.getByRole('button', { name: /Andere App/ }).click();
+  await admin.getByLabel('Name', { exact: true }).fill('Testapp');
+  const redirects = admin.getByLabel('Weiterleitungs-Adressen: neue Adresse');
+  await redirects.fill(callback);
+  await redirects.press('Enter');
+  await admin.getByLabel('Adresse zum Öffnen (freiwillig)').fill('http://localhost:18744/');
+  await admin.getByRole('switch', { name: 'Vorher um Erlaubnis fragen' }).click();
+  await shot(admin, 'admin-app-new');
+  await admin.getByRole('button', { name: 'App anlegen' }).click();
+  await title(admin, '„Testapp“ ist angelegt ✧');
+  const clientId = await admin.locator('.copy-field code').first().innerText();
+  const clientSecret = await admin.locator('.secret-once code').innerText();
+  if (!clientId.startsWith('testapp-') || clientSecret.length < 20)
+    throw new Error(`no client id or secret: ${clientId} ${clientSecret}`);
+  await shot(admin, 'admin-app-secret');
+  await admin.getByRole('button', { name: 'Fertig – zur App' }).click();
+  await title(admin, 'Testapp');
+  await admin.locator('.secret-once').waitFor({ state: 'detached' });
+  await shot(admin, 'admin-app-detail');
+  await admin.emulateMedia({ colorScheme: 'dark' });
+  await admin.setViewportSize({ width: 1280, height: 2300 });
+  await shot(admin, 'admin-app-detail-dark');
+  await admin.setViewportSize({ width: 1280, height: 860 });
+  await admin.emulateMedia({ colorScheme: 'light' });
+  // Changing one thing sends only that.
+  await admin.getByLabel('Beschreibung').fill('Nur zum Testen');
+  await admin.getByRole('button', { name: 'Speichern' }).click();
+  await admin.getByText('Gespeichert ✧').waitFor();
+  await admin.getByText('Ungespeicherte Änderungen').waitFor({ state: 'detached' });
+
+  // A time window for this app only, for the kids.
+  await admin.goto(`${base}/admin#/groups`);
+  await admin.getByRole('button', { name: /Kinder/ }).click();
+  await title(admin, 'Kinder');
+  const windows = admin.locator('.section', { hasText: 'Zeitfenster' });
+  await windows.getByRole('button', { name: 'Zeitfenster hinzufügen' }).click();
+  await windows.getByLabel('Für welche App?').selectOption({ label: 'Testapp' });
+  await windows.getByText('(nur Testapp)').waitFor();
+  await windows.getByRole('button', { name: 'Speichern' }).click();
+  await admin.getByText('Gespeichert ✧').waitFor();
+  await admin.reload();
+  await title(admin, 'Kinder');
+  await windows.getByText('(nur Testapp)').waitFor();
+  await shot(admin, 'group-app-window');
+
+  // ── Signing in to it: authorize with PKCE, agree, the code for tokens ──
+  const signIn = async (extra = {}) => {
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const state = randomBytes(8).toString('hex');
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: callback,
+      scope: 'openid profile email groups',
+      state,
+      nonce: 'n-0S6',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      ...extra,
+    });
+    await admin.goto(`${base}/oauth/authorize?${query}`);
+    return { verifier, state };
+  };
+  const exchange = async ({ verifier, state }) => {
+    await admin.waitForURL(/^http:\/\/localhost:18744\/cb\?/);
+    const answer = new URL(admin.url());
+    if (answer.searchParams.get('state') !== state) throw new Error(`state: ${answer}`);
+    if (answer.searchParams.get('iss') !== base) throw new Error(`iss: ${answer}`);
+    const tokens = await post(
+      '/oauth/token',
+      {
+        grant_type: 'authorization_code',
+        code: answer.searchParams.get('code') ?? '',
+        redirect_uri: callback,
+        code_verifier: verifier,
+      },
+      [clientId, clientSecret],
+    );
+    const idToken = claims(tokens.id_token);
+    if (idToken.preferred_username !== 'nyu' || idToken.nonce !== 'n-0S6')
+      throw new Error(`ID token: ${JSON.stringify(idToken)}`);
+    return tokens;
+  };
+  let flow = await signIn();
+  await title(admin, '„Testapp“ möchte wissen, wer du bist');
+  await shot(admin, 'consent');
+  await admin.getByRole('button', { name: 'Erlauben', exact: true }).click();
+  await exchange(flow);
+
+  // ── "My apps": the tile, the grant, and taking it back ──
+  await admin.goto(`${base}/#/apps`);
+  await title(admin, 'Meine Apps');
+  const grant = admin.locator('.item', { hasText: 'Testapp' });
+  await grant.waitFor();
+  await admin.locator('.app-tile', { hasText: 'Testapp' }).waitFor();
+  await shot(admin, 'my-apps');
+  await admin.setViewportSize({ width: 390, height: 844 });
+  await shot(admin, 'my-apps-phone');
+  await admin.setViewportSize({ width: 1280, height: 860 });
+  await grant.getByRole('button', { name: 'Zugriff entziehen' }).click();
+  await admin.getByRole('dialog').getByRole('button', { name: 'Zugriff entziehen' }).click();
+  await admin.getByText('Noch keine App hat dich angemeldet.').waitFor();
+
+  // ── The app asks to sign in again: the form shows although a session is there ──
+  await admin.presence(false);
+  flow = await signIn({ prompt: 'login' });
+  await title(admin, 'Anmelden');
+  if (!admin.url().includes('fresh=1')) throw new Error(`no fresh sign-in: ${admin.url()}`);
+  await admin.getByText('Die App möchte, dass du dich noch einmal anmeldest.').waitFor();
+  await shot(admin, 'login-fresh');
+  await admin.presence(true);
+  await admin
+    .getByRole('button', { name: 'Mit Passkey anmelden' })
+    .click({ timeout: 3000 })
+    .catch(() => undefined);
+  // The grant was taken back: the app asks again.
+  await title(admin, '„Testapp“ möchte wissen, wer du bist');
+  await admin.setViewportSize({ width: 390, height: 844 });
+  await shot(admin, 'consent-phone');
+  await admin.setViewportSize({ width: 1280, height: 860 });
+  await admin.getByRole('button', { name: 'Erlauben', exact: true }).click();
+  await exchange(flow);
+
+  // ── A TV: a public app with the device flow, the code typed in the browser ──
+  await admin.goto(`${base}/admin#/apps/new`);
+  await admin.getByRole('button', { name: /Andere App/ }).click();
+  await admin.getByLabel('Name', { exact: true }).fill('Fernseher');
+  await admin.getByRole('switch', { name: 'Öffentliche App, ohne Geheimnis' }).click();
+  await admin.getByText('Mehr Optionen').click();
+  await admin.getByRole('checkbox', { name: /Anmelden im Browser/ }).uncheck();
+  await admin.getByRole('checkbox', { name: /Geräte ohne Browser/ }).check();
+  await admin.getByRole('button', { name: 'App anlegen' }).click();
+  await title(admin, '„Fernseher“ ist angelegt ✧');
+  const tvId = await admin.locator('.copy-field code').first().innerText();
+  const started = await post('/oauth/device_authorization', {
+    client_id: tvId,
+    scope: 'openid profile',
+  });
+  if (!started.verification_uri_complete?.includes('/#/device?code='))
+    throw new Error(`device: ${JSON.stringify(started)}`);
+
+  // Somebody without a session is sent to sign in first, and comes back to the code.
+  const phone = await newBrowser('phone');
+  await phone.presence(false);
+  await phone.goto(started.verification_uri_complete);
+  await title(phone, 'Anmelden');
+  if (!decodeURIComponent(phone.url()).includes('continue=/#/device?code='))
+    throw new Error(`no way back to the device page: ${phone.url()}`);
+  await shot(phone, 'device-sign-in-first');
+
+  await admin.goto(`${base}/#/device`);
+  await title(admin, 'Gerät verbinden');
+  await admin.getByLabel('Code').fill(started.user_code.toLowerCase().replace('-', ' '));
+  await shot(admin, 'device-code');
+  await admin.getByRole('button', { name: 'Weiter' }).click();
+  await title(admin, '„Fernseher“ verbinden?');
+  await shot(admin, 'device-confirm');
+  await admin.getByRole('button', { name: 'Verbinden', exact: true }).click();
+  await title(admin, 'Verbunden ✧');
+  await shot(admin, 'device-done');
+  const deviceTokens = await post('/oauth/token', {
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    device_code: started.device_code,
+    client_id: tvId,
+  });
+  if (claims(deviceTokens.id_token).preferred_username !== 'nyu')
+    throw new Error(`device tokens: ${JSON.stringify(deviceTokens)}`);
+
+  // ── The apps list, and the pages for refusals and broken apps ──
+  await admin.goto(`${base}/admin#/apps`);
+  await title(admin, 'Apps');
+  await admin.locator('.person-row', { hasText: 'Fernseher' }).waitFor();
+  await shot(admin, 'admin-apps');
+  await admin.goto(
+    `${base}/#/denied?reason=mfa&app=Tresor&continue=${encodeURIComponent('/oauth/authorize?client_id=x')}`,
+  );
+  await title(admin, 'Noch ein Schritt für diese App');
+  await admin.getByRole('button', { name: 'Jetzt bestätigen und weiter' }).waitFor();
+  await shot(admin, 'denied-mfa');
+  await admin.goto(`${base}/#/denied?reason=time&app=Spiele`);
+  await title(admin, 'Gerade nicht');
+  await shot(admin, 'denied-time');
+  await admin.goto(
+    `${base}/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent('https://evil.example.net/cb')}`,
+  );
+  await title(admin, 'Mit der App stimmt etwas nicht');
+  await shot(admin, 'oauth-error');
+
+  // The event log tells about apps too.
+  await admin.goto(`${base}/admin#/events`);
+  await admin.getByText('Nyu Neko hat sich bei „Testapp“ angemeldet.').first().waitFor();
+  await admin.getByText('Nyu Neko hat ein Gerät mit „Fernseher“ verbunden.').waitFor();
+  await shot(admin, 'admin-events-apps');
+
+  // ── Signing out from an app, without a hint: confirmed first ──
+  await admin.presence(false);
+  await admin.goto(`${base}/oauth/logout`);
+  await title(admin, 'Abmelden?');
+  await shot(admin, 'logout-confirm');
+  await admin.getByRole('button', { name: 'Abmelden', exact: true }).last().click();
+  await title(admin, 'Du bist abgemeldet');
+  await admin.emulateMedia({ colorScheme: 'dark' });
+  await shot(admin, 'signed-out-dark');
+  await admin.emulateMedia({ colorScheme: 'light' });
 }
 
 try {

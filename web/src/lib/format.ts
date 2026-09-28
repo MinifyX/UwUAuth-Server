@@ -114,7 +114,13 @@ export function windowText(window: Window): string {
 }
 
 /** Every window, or that there are none: "Mo–Fr 07:00–20:00 · Sa, So 09:00–21:00". */
-export function windowsText(windows: Window[]): string {
+export function windowsText(windows: Window[], appName?: (id: string) => string): string {
   if (windows.length === 0) return t('Keine Zeitfenster: jederzeit.');
-  return windows.map(windowText).join(' · ');
+  return windows
+    .map((window) =>
+      window.app && appName
+        ? `${windowText(window)} (${t('nur {app}', { app: appName(window.app) })})`
+        : windowText(window),
+    )
+    .join(' · ');
 }

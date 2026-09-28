@@ -541,7 +541,10 @@ async fn without_a_hint_signing_out_is_confirmed_first() {
     assert!(answer.starts_with(&format!("{PUBLIC}/#/logout?request=")), "{answer}");
     assert_eq!(admin.get("/uwu/v1/me").await.status(), StatusCode::OK, "still signed in");
     let request = param(&answer.replace("/#/logout", ""), "request").unwrap();
-    admin.ok("POST", &format!("/uwu/v1/logout-request/{request}"), json!({ "confirm": true })).await;
+    let info = admin.json(&format!("/uwu/v1/logout-request/{request}")).await;
+    assert_eq!((info["app"].clone(), info["returns"].clone()), (Value::Null, json!(false)));
+    let done = admin.ok("POST", &format!("/uwu/v1/logout-request/{request}"), json!({ "confirm": true })).await;
+    assert_eq!(done["redirect"], format!("{PUBLIC}/#/signed-out"));
     assert_eq!(admin.get("/uwu/v1/me").await.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -568,6 +571,7 @@ async fn max_age_zero_asks_to_sign_in_again_once() {
     let answer = authorize(&admin, &client_id, &[("max_age", "0")]).await;
     let continue_to = param(&answer.replace("/#/login", ""), "continue").unwrap();
     assert!(continue_to.contains("uwu_after="));
+    assert_eq!(param(&answer.replace("/#/login", ""), "fresh").as_deref(), Some("1"), "the sign-in page asks again");
     // Signing in again, then back where the sign-in page sends the browser.
     admin.ok("POST", "/uwu/v1/login", json!({ "login": "admin", "password": PASSWORD })).await;
     let response = admin.get(&continue_to).await;
@@ -601,4 +605,51 @@ async fn my_apps_lists_what_i_may_open_and_what_i_signed_in_to() {
     let grant = mine["connected"][0]["id"].as_str().unwrap().to_string();
     admin.ok("DELETE", &format!("/uwu/v1/me/grants/{grant}"), json!({})).await;
     assert!(admin.json("/uwu/v1/me/apps").await["connected"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn agreeing_to_an_app_that_wants_a_form_post_goes_through_the_answer_page() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, _, _) = app(&admin, json!({ "name": "App", "redirectUris": [REDIRECT], "consent": true })).await;
+    let answer = authorize(&admin, &client_id, &[("response_mode", "form_post")]).await;
+    let request = param(&answer.replace("/#/consent", ""), "request").unwrap();
+    let info = admin.json(&format!("/uwu/v1/consent/{request}")).await;
+    assert_eq!(info["app"]["template"], Value::Null);
+    let decided = admin.ok("POST", &format!("/uwu/v1/consent/{request}"), json!({ "approve": true })).await;
+    let redirect = decided["redirect"].as_str().unwrap();
+    assert!(redirect.starts_with(&format!("{PUBLIC}/oauth/answer/")), "{redirect}");
+    let path = redirect.trim_start_matches(PUBLIC);
+    let page = admin.get(path).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = text(page).await;
+    assert!(
+        page.contains(&format!("action=\"{REDIRECT}\""))
+            && page.contains("name=\"code\"")
+            && page.contains("name=\"state\" value=\"xyz\"")
+    );
+    assert_eq!(admin.get(path).await.status(), StatusCode::NOT_FOUND, "the answer is fetched once");
+}
+
+#[tokio::test]
+async fn changing_an_app_changes_only_what_is_sent() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let device = "urn:ietf:params:oauth:grant-type:device_code";
+    let (client_id, secret, id) = app(
+        &admin,
+        json!({ "name": "App", "redirectUris": [REDIRECT], "grantTypes": ["authorization_code", device], "accessTokenMinutes": 30, "launchUrl": "https://app.example.com/" }),
+    )
+    .await;
+    assert!(secret.is_some());
+    let changed = admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "disabled": true })).await;
+    assert_eq!(changed["disabled"], true);
+    assert_eq!(changed["redirectUris"], json!([REDIRECT]));
+    assert_eq!(changed["grantTypes"], json!(["authorization_code", device]));
+    assert_eq!((changed["accessTokenMinutes"].as_i64(), changed["public"].as_bool()), (Some(30), Some(false)));
+    let changed = admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "launchUrl": "", "consent": true })).await;
+    assert_eq!((changed["launchUrl"].clone(), changed["consent"].clone()), (Value::Null, json!(true)));
+    assert_eq!(changed["clientId"], client_id.as_str());
+    let changed = admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "public": true })).await;
+    assert_eq!((changed["public"].as_bool(), changed["tokenAuthMethod"].as_str()), (Some(true), Some("none")));
 }

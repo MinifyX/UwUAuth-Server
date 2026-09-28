@@ -112,7 +112,7 @@ fn with_state(uri: &str, app_state: Option<&str>) -> String {
 
 async fn info(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let request = state.oidc().logouts.peek(&id).ok_or_else(ApiError::not_found)?;
-    Ok(Json(json!({ "app": request.app })))
+    Ok(Json(json!({ "app": request.app, "returns": request.redirect.is_some() })))
 }
 
 #[derive(Deserialize)]
@@ -136,7 +136,11 @@ async fn confirm(
         end(&state, &me.session.id, &me.person.id, ip).await?;
         cookies.push(set_cookie(&state, SESSION_COOKIE, "", Some(0)));
     }
-    let to = request.redirect.filter(|_| decision.confirm).unwrap_or_else(|| format!("{}/#/", state.config.public));
+    let to = match (decision.confirm, request.redirect) {
+        (true, Some(redirect)) => redirect,
+        (true, None) => format!("{}/#/signed-out", state.config.public),
+        (false, _) => format!("{}/#/", state.config.public),
+    };
     Ok(with_cookies(Json(json!({ "redirect": to })).into_response(), cookies))
 }
 

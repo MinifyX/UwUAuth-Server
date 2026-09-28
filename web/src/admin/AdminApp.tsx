@@ -12,6 +12,7 @@ import { PeopleList } from '../people/PeopleList';
 import { PersonDetail } from '../people/PersonDetail';
 import { Restricted } from '../portal/Restricted';
 import { Forgot, SignIn } from '../portal/SignIn';
+import { Apps } from './Apps';
 import { Attributes } from './Attributes';
 import { Backups } from './Backups';
 import { Events } from './Events';
@@ -29,6 +30,7 @@ const PAGES: NavItem[] = [
   { path: '/people', label: N_('Personen'), icon: 'user' },
   { path: '/groups', label: N_('Gruppen'), icon: 'users' },
   { path: '/invitations', label: N_('Einladungen'), icon: 'sparkles' },
+  { path: '/apps', label: N_('Apps'), icon: 'grid' },
   { path: '/attributes', label: N_('Zusätzliche Felder'), icon: 'tag' },
   { path: '/settings', label: N_('Einstellungen'), icon: 'building' },
   { path: '/events', label: N_('Ereignisse'), icon: 'history' },
@@ -139,6 +141,7 @@ function AdminPages({ me }: { me: Me }) {
         ))}
       {page.path === '/groups' && <Groups me={me} id={sub || null} />}
       {page.path === '/invitations' && <Invitations me={me} />}
+      {page.path === '/apps' && <Apps id={sub || null} />}
       {page.path === '/attributes' && <Attributes />}
       {page.path === '/settings' && <AdminSettings me={me} />}
       {page.path === '/events' && <Events />}

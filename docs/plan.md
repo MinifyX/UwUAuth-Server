@@ -191,23 +191,24 @@ Das Herz. Noch kein Protokoll nach außen, aber alles, was die späteren Protoko
 - [x] Browser-Test in CI (Playwright): einladen, Passkey anlegen (virtueller Authenticator),
       anmelden, Kind verwalten
 
-### Stufe 2 — OpenID Connect und OAuth 2 (0.2)
+### Stufe 2 — OpenID Connect und OAuth 2 (0.2, fertig)
 
-- [ ] OIDC-Provider: Discovery, JWKS (ES256, dazu RS256 für ältere Apps), Authorization Code mit
+- [x] OIDC-Provider: Discovery, JWKS (ES256, dazu RS256 für ältere Apps), Authorization Code mit
       PKCE, Refresh-Tokens mit Rotation, UserInfo, RP-initiated und Back-Channel-Logout
-- [ ] Device Authorization Grant (RFC 8628) für Fernseher und Kommandozeilen, Client Credentials
+- [x] Device Authorization Grant (RFC 8628) für Fernseher und Kommandozeilen, Client Credentials
       für Dienste, Token Introspection und Revocation
-- [ ] Claims: `sub` (die unveränderliche ID), `preferred_username`, `email`, `name`, `picture`,
+- [x] Claims: `sub` (die unveränderliche ID), `preferred_username`, `email`, `name`, `picture`,
       `groups`, eigene Attribute und Rollen pro App
-- [ ] Apps im Admin-Portal anlegen, mit Vorlagen für häufige selbst gehostete Apps (Nextcloud,
+- [x] Apps im Admin-Portal anlegen, mit Vorlagen für häufige selbst gehostete Apps (Nextcloud,
       Immich, Jellyfin, Home Assistant, Forgejo/Gitea, Grafana, Paperless-ngx, Proxmox,
       Portainer …), jeweils mit einer kurzen Anleitung für die Gegenseite
-- [ ] Zugriffsregeln greifen: Gruppen, Zeitfenster, zweiter Faktor pro App
-- [ ] Anmeldeseite im UwU-Look, „Angemeldet bleiben“, Zustimmung nur für fremde Apps
-- [ ] Dynamic Client Registration (RFC 7591), aber nur mit Einmal-Token — die Grundlage der
+- [x] Zugriffsregeln greifen: Gruppen, Zeitfenster, zweiter Faktor pro App
+- [x] Anmeldeseite im UwU-Look, „Angemeldet bleiben“, Zustimmung nur für fremde Apps
+- [x] Dynamic Client Registration (RFC 7591), aber nur mit Einmal-Token — die Grundlage der
       Suite-Kopplung in Stufe 4
 - [ ] Anmeldung mit externen Konten (Google, Microsoft, Apple, GitHub) als Option pro Person
 - [ ] In CI: die OpenID-Conformance-Suite (als eigener, wöchentlicher Job)
+- [x] Getestet mit Grafana, Forgejo und Nextcloud im echten Browser (wöchentlich und vor Releases)
 
 ### Stufe 3 — LDAP im Stil von Active Directory (0.3)
 

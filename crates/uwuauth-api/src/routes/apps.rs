@@ -271,13 +271,59 @@ async fn show(State(state): State<AppState>, admin: AdminOnly, Path(id): Path<St
     Ok(Json(body))
 }
 
+/// A change to an app: only what is sent changes, everything else stays as it is.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct Change {
     name: Option<String>,
     disabled: Option<bool>,
-    #[serde(flatten)]
-    rest: NewApp,
+    description: Option<String>,
+    redirect_uris: Option<Vec<String>>,
+    post_logout_redirect_uris: Option<Vec<String>>,
+    /// An empty string takes it away.
+    backchannel_logout_uri: Option<String>,
+    grant_types: Option<Vec<String>>,
+    /// `true` takes the secret away (the app becomes public); a secret comes with "new secret".
+    public: Option<bool>,
+    token_auth_method: Option<String>,
+    id_token_alg: Option<String>,
+    consent: Option<bool>,
+    require_pkce: Option<bool>,
+    allowed_groups: Option<Vec<String>>,
+    require_mfa: Option<bool>,
+    roles: Option<Vec<RoleIn>>,
+    access_token_minutes: Option<i64>,
+    refresh_token_days: Option<i64>,
+    /// An empty string takes it away.
+    launch_url: Option<String>,
+}
+
+/// The app as `NewApp`, with what `change` says on top.
+fn merged(current: &App, change: Change, public: bool) -> NewApp {
+    NewApp {
+        name: current.name.clone(),
+        description: Some(change.description.unwrap_or_else(|| current.description.clone())),
+        template: None,
+        url: None,
+        slug: None,
+        redirect_uris: change.redirect_uris.unwrap_or_else(|| current.redirect_uris.clone()),
+        post_logout_redirect_uris: change
+            .post_logout_redirect_uris
+            .unwrap_or_else(|| current.post_logout_redirect_uris.clone()),
+        backchannel_logout_uri: change.backchannel_logout_uri.or_else(|| current.backchannel_logout_uri.clone()),
+        grant_types: Some(change.grant_types.unwrap_or_else(|| current.grant_types.clone())),
+        public,
+        token_auth_method: Some(change.token_auth_method.unwrap_or_else(|| current.token_auth_method.clone())),
+        id_token_alg: Some(change.id_token_alg.unwrap_or_else(|| current.id_token_alg.clone())),
+        consent: change.consent.unwrap_or(current.consent),
+        require_pkce: change.require_pkce.unwrap_or(current.require_pkce),
+        allowed_groups: change.allowed_groups.unwrap_or_else(|| current.allowed_groups.clone()),
+        require_mfa: change.require_mfa.unwrap_or(current.require_mfa),
+        roles: change.roles.unwrap_or_else(|| serde_json::from_str(&current.roles).unwrap_or_default()),
+        access_token_minutes: Some(change.access_token_minutes.unwrap_or(current.access_token_minutes)),
+        refresh_token_days: Some(change.refresh_token_days.unwrap_or(current.refresh_token_days)),
+        launch_url: change.launch_url.or_else(|| current.launch_url.clone()),
+    }
 }
 
 async fn change(
@@ -288,8 +334,7 @@ async fn change(
     Json(change): Json<Change>,
 ) -> ApiResult<Json<Value>> {
     let current = state.store.app(&id).await?.ok_or_else(ApiError::not_found)?;
-    let public = current.secret_hash.is_none();
-    let checked = fields(&state, current.clone(), NewApp { public, ..change.rest }).await?;
+    let public = current.secret_hash.is_none() || change.public == Some(true);
     let name = match change.name.as_deref() {
         Some(name) => {
             policy::optional(Some(name), 80).ok_or_else(|| ApiError::field("name", "required", "A name is needed."))?
@@ -297,12 +342,14 @@ async fn change(
         None => current.name.clone(),
     };
     let disabled = change.disabled.unwrap_or(current.disabled);
+    let checked = fields(&state, current.clone(), merged(&current, change, public)).await?;
     let updated = state
         .store
         .update_app(&id, move |app| {
             *app = App {
                 name,
                 disabled,
+                secret_hash: if public { None } else { app.secret_hash.clone() },
                 token_auth_method: if public { "none".into() } else { checked.token_auth_method.clone() },
                 ..checked
             };

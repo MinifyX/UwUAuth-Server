@@ -329,7 +329,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
             Some(&me.person.id),
             Some(&app.id),
             &ip,
-            json!({ "reason": reason }),
+            json!({ "reason": reason, "app": app.name }),
         )
         .await;
         if prompts.contains(&"none") {
@@ -393,12 +393,21 @@ fn to_login(state: &AppState, query: &str, again: bool, now: i64) -> Response {
     let mut back = without(query, &["prompt", "uwu_after"]);
     if again {
         back.push_str(&format!("&uwu_after={now}"));
+        // `fresh`: the sign-in page asks even when somebody is signed in already — sending them
+        // straight on would only bring them back here.
+        return page(state, "login", &[("continue", &format!("/oauth/authorize?{back}")), ("fresh", "1")]);
     }
     page(state, "login", &[("continue", &format!("/oauth/authorize?{back}"))])
 }
 
 /// Make the code, note the grant, send the answer.
 async fn issue(state: &AppState, app: &App, request: Request, consented: bool, ip: IpAddr) -> ApiResult<Response> {
+    let code = make_code(state, app, &request, consented, ip).await?;
+    Ok(answer(state, &request.redirect_uri, request.form_post, &[("code", &code)], request.state.as_deref()))
+}
+
+/// Make the code and note the grant.
+async fn make_code(state: &AppState, app: &App, request: &Request, consented: bool, ip: IpAddr) -> ApiResult<String> {
     let code = crate::crypto::random_token(32);
     let scope = request.scopes.join(" ");
     state.store.touch_grant(&app.id, &request.person_id, &scope, consented).await?;
@@ -427,7 +436,7 @@ async fn issue(state: &AppState, app: &App, request: Request, consented: bool, i
             sid: request.sid.clone(),
         },
     );
-    Ok(answer(state, &request.redirect_uri, request.form_post, &[("code", &code)], request.state.as_deref()))
+    Ok(code)
 }
 
 impl AppState {
@@ -439,7 +448,47 @@ impl AppState {
 // ── Consent ───────────────────────────────────────────────
 
 pub fn consent_routes() -> Router<AppState> {
-    Router::new().route("/uwu/v1/consent/{id}", get(consent_info).post(consent_decide))
+    Router::new()
+        .route("/uwu/v1/consent/{id}", get(consent_info).post(consent_decide))
+        .route("/oauth/answer/{id}", get(form_answer))
+}
+
+/// An answer for an app that wants it posted (`response_mode=form_post`), after the person agreed
+/// in the web app: the web app cannot post to another site itself, so the browser comes here for
+/// the page that does.
+#[derive(Debug, Clone)]
+pub struct FormAnswer {
+    pub redirect_uri: String,
+    pub pairs: Vec<(String, String)>,
+}
+
+async fn form_answer(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Response> {
+    let answer = state.oidc().answers.take(&id).ok_or_else(ApiError::not_found)?;
+    let pairs: Vec<(&str, &str)> = answer.pairs.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+    Ok(form_post_page(&answer.redirect_uri, &pairs))
+}
+
+/// Where the browser goes with the answer for the app: the app's address with it added, or, for
+/// `form_post`, the page that posts it.
+fn answer_address(state: &AppState, request: &Request, pairs: &[(&str, &str)]) -> String {
+    let mut all: Vec<(String, String)> =
+        pairs.iter().map(|(name, value)| (name.to_string(), value.to_string())).collect();
+    if let Some(app_state) = &request.state {
+        all.push(("state".into(), app_state.clone()));
+    }
+    all.push(("iss".into(), issuer(state)));
+    if request.form_post {
+        let id = crate::crypto::random_token(18);
+        state.oidc().answers.put(id.clone(), FormAnswer { redirect_uri: request.redirect_uri.clone(), pairs: all });
+        return format!("{}/oauth/answer/{id}", state.config.public);
+    }
+    match url::Url::parse(&request.redirect_uri) {
+        Ok(mut url) => {
+            url.query_pairs_mut().extend_pairs(all);
+            url.to_string()
+        }
+        Err(_) => request.redirect_uri.clone(),
+    }
 }
 
 async fn consent_info(State(state): State<AppState>, me: Me, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -455,7 +504,7 @@ async fn consent_info(State(state): State<AppState>, me: Me, Path(id): Path<Stri
         .and_then(|url| url.host_str().map(str::to_string))
         .unwrap_or_default();
     Ok(Json(json!({
-        "app": { "name": app.name, "description": app.description, "launchUrl": app.launch_url },
+        "app": { "name": app.name, "description": app.description, "launchUrl": app.launch_url, "template": app.template },
         "scopes": request.scopes,
         "redirectHost": host,
     })))
@@ -473,7 +522,7 @@ async fn consent_decide(
     ClientIp(ip): ClientIp,
     Path(id): Path<String>,
     Json(decision): Json<Decision>,
-) -> ApiResult<Response> {
+) -> ApiResult<Json<Value>> {
     let request = state
         .oidc()
         .consents
@@ -481,39 +530,23 @@ async fn consent_decide(
         .filter(|request| request.person_id == me.person.id)
         .ok_or_else(ApiError::not_found)?;
     let app = state.store.app(&request.app_id).await?.ok_or_else(ApiError::not_found)?;
-    let response = if decision.approve {
-        if request.form_post {
-            // The browser cannot follow a form post from JSON: the web app gets it as a page.
-            issue(&state, &app, request, true, ip).await?
-        } else {
-            let redirect = issue(&state, &app, request, true, ip).await?;
-            let location = redirect
-                .headers()
-                .get(header::LOCATION)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default()
-                .to_string();
-            Json(json!({ "redirect": location })).into_response()
-        }
+    let redirect = if decision.approve {
+        let code = make_code(&state, &app, &request, true, ip).await?;
+        answer_address(&state, &request, &[("code", &code)])
     } else {
-        audit(&state, "app_consent_refused", Some(&me.person.id), Some(&me.person.id), Some(&app.id), &ip, json!({}))
-            .await;
-        let refused = answer(
+        audit(
             &state,
-            &request.redirect_uri,
-            false,
-            &[("error", "access_denied"), ("error_description", "the person said no")],
-            request.state.as_deref(),
-        );
-        let location = refused
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_string();
-        Json(json!({ "redirect": location })).into_response()
+            "app_consent_refused",
+            Some(&me.person.id),
+            Some(&me.person.id),
+            Some(&app.id),
+            &ip,
+            json!({ "app": app.name }),
+        )
+        .await;
+        answer_address(&state, &request, &[("error", "access_denied"), ("error_description", "the person said no")])
     };
-    Ok(response)
+    Ok(Json(json!({ "redirect": redirect })))
 }
 
 #[cfg(test)]

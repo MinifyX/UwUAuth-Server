@@ -247,3 +247,97 @@ export type ImportReport = {
   groups: { created: string[]; skipped: string[] };
   dryRun: boolean;
 };
+
+// ── Apps (OpenID Connect) ─────────────────────────────────
+
+export type GrantType =
+  | 'authorization_code'
+  | 'refresh_token'
+  | 'client_credentials'
+  | 'urn:ietf:params:oauth:grant-type:device_code';
+
+/** An app as the admin portal sees it. */
+export type App = {
+  id: string;
+  clientId: string;
+  name: string;
+  description: string;
+  template: string | null;
+  public: boolean;
+  redirectUris: string[];
+  postLogoutRedirectUris: string[];
+  backchannelLogoutUri: string | null;
+  grantTypes: GrantType[];
+  tokenAuthMethod: 'client_secret_basic' | 'client_secret_post' | 'none';
+  idTokenAlg: 'RS256' | 'ES256';
+  consent: boolean;
+  requirePkce: boolean;
+  allowedGroups: string[];
+  requireMfa: boolean;
+  roles: { group: string; role: string }[];
+  accessTokenMinutes: number;
+  refreshTokenDays: number;
+  launchUrl: string | null;
+  disabled: boolean;
+  created: string;
+  updated: string;
+  /** On the detail and right after making it. */
+  issuer?: string;
+  /** What to set on the app's side, from its template. */
+  notes?: string;
+  /** Only right after making it. */
+  clientSecret?: string | null;
+};
+
+export type AppTemplate = {
+  key: string;
+  name: string;
+  redirectUris: string[];
+  postLogoutRedirectUris: string[];
+  scopes: string;
+  public: boolean;
+  launchUrl: string;
+  notes: string;
+};
+
+export type RegistrationToken = {
+  id: string;
+  name: string;
+  usesLeft: number;
+  created?: string;
+  expires: string;
+  createdBy?: string | null;
+  /** Only right after making it. */
+  secret?: string;
+};
+
+/** "My apps" in the portal. */
+export type MyApps = {
+  apps: {
+    id: string;
+    name: string;
+    description: string;
+    launchUrl: string;
+    template: string | null;
+  }[];
+  connected: {
+    id: string;
+    app: string;
+    appId: string;
+    scopes: string[];
+    created: string;
+    lastUsed: string | null;
+  }[];
+};
+
+export type ConsentInfo = {
+  app: { name: string; description: string; launchUrl: string | null; template: string | null };
+  scopes: string[];
+  redirectHost: string;
+};
+
+export type DeviceInfo = {
+  app: { name: string; description: string };
+  scopes: string[];
+  code: string;
+};
