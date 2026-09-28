@@ -5,8 +5,10 @@ einer Stelle, und jede App meldet sich darüber an — per OpenID Connect, LDAP,
 hinter einem Reverse-Proxy. Gedacht für die Familie zuhause und das kleine Büro, gebaut so, dass
 später auch eine Firma damit auskommt.
 
-Stand: September 2026. Stufe 0 (das Gerüst, 0.0.1) und Stufe 1 (die Benutzerverwaltung) sind
-fertig. Als Nächstes kommen Stufe 2 (OpenID Connect) und Stufe 3 (LDAP), gemeinsam als 0.3.
+Stand: September 2026. Stufen 0 bis 3 sind fertig (0.3: Benutzerverwaltung, OpenID Connect,
+LDAP), dazu UwUAuths Seite von Stufe 4 (0.4: Kopplung mit der UwUSuite, SCIM an Apps). Die
+Suite-Apps bauen ihre Seite der Kopplung jeweils in ihrem eigenen Repository; als Nächstes kommt
+hier Stufe 5 (Forward-Auth).
 
 ## Leitlinien
 
@@ -232,7 +234,7 @@ Das Herz. Noch kein Protokoll nach außen, aber alles, was die späteren Protoko
 - [x] Kein Kerberos, kein NTLM, kein Domänenbeitritt (siehe Leitlinien)
 - [x] Admin-Portal: LDAP-Einstellungen auf einen Blick, Konten für Apps (Passwort einmal gezeigt)
 
-### Stufe 4 — Kopplung mit der UwUSuite (0.4)
+### Stufe 4 — Kopplung mit der UwUSuite (0.4, UwUAuths Seite fertig)
 
 Die Suite-Apps sprechen danach OIDC und SCIM wie jede andere App — die Kopplung nimmt nur das
 Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
@@ -252,6 +254,29 @@ Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
    Admin-Portal für diese App freigegeben sind. Anmeldung läuft über OIDC. Die lokalen Konten
    der App bleiben als Notzugang erhalten.
 
+**In UwUAuth** (Protokoll und Einzelheiten in [`docs/suite.md`](suite.md))
+
+- [x] Kopplungscodes: 12 Zeichen Crockford-Base32 (60 Bit), einmal, 15 Minuten, als QR-Code
+      `<UwUAuth>/#pair=<Code>`; beim Erstellen wählt der Admin, wer die App benutzen darf und wer
+      dort Admin ist; offene Codes lassen sich zurückziehen, der Dialog merkt, wann eine App den
+      Code benutzt hat
+- [x] `/uwu/v1/server` sagt `product: "UwUAuth"`, `pairing: 1` und `scim: true`
+- [x] `POST /uwu/v1/pair`: 10 Versuche pro Adresse und 60 insgesamt je 15 Minuten, jeder Code in
+      konstanter Zeit verglichen, verbraucht in derselben Transaktion, die die App anlegt;
+      Adressen nur `https` auf dem Host der App (oder Loopback), Symbol als PNG bis 64 KiB
+- [x] Die App wird ein vertraulicher OIDC-Client mit PKCE und ohne Zustimmungsseite; ihre Rollen
+      bekommen Gruppen (Claim `roles`, eine Rolle `user` ohne Auswahl bekommt, wer die App
+      benutzen darf)
+- [x] SCIM-Push: Personen (per Adresse oder Benutzername), deaktiviert statt gelöscht, wer nicht
+      mehr darf, gelöscht, wer ganz weg ist; die freigegebenen Gruppen und die der Rollen mit
+      ihren Mitgliedern; nur Änderungen, im Hintergrund, bei jeder Änderung im Verzeichnis und
+      alle fünf Minuten
+- [x] Admin-Portal: *Apps → UwUSuite-App koppeln*, gekoppelte Apps mit ihrem Symbol, Rollen und
+      SCIM-Stand auf der Seite der App; Ereignisse fürs Koppeln, abgelehnte Codes und
+      SCIM-Fehler
+- [x] `/.well-known/uwusuite` für die Erkennung unter derselben Domain
+- [ ] Erkennung im selben Netz (mDNS), wenn eine Suite-App das braucht
+
 **Pro Programm** (jeweils ein eigener PR in dessen Repository)
 
 - [ ] **UwUMail Server** — kann schon OIDC-Anmeldung und LDAP. Dazu kommen die Kopplung, SCIM
@@ -265,8 +290,8 @@ Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
       Ende-zu-Ende-verschlüsselt
 - [ ] **Desktop-Apps** (UwUMail, UwULock, UwUSSH, UwURDP) — Anmeldung im Browser (OIDC mit PKCE
       und Loopback-Redirect), wenn ihr Server mit UwUAuth gekoppelt ist
-- [ ] `/.well-known/uwusuite` für die automatische Erkennung im selben Netz oder unter derselben
-      Domain
+- [x] `/.well-known/uwusuite` für die automatische Erkennung unter derselben Domain (im selben
+      Netz: siehe oben)
 
 ### Stufe 5 — Forward-Auth für Reverse-Proxies (0.5)
 
@@ -291,6 +316,8 @@ Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
 ### Stufe 7 — SCIM 2.0 und Übernahme (0.7)
 
 - [ ] SCIM-Client allgemein: Personen und Gruppen in jede App schieben, die SCIM annimmt
+      (Grundlage seit 0.4: SCIM-Adresse und Token lassen sich für jede App eintragen; getestet
+      bisher nur gegen die UwUSuite — fehlt: Tests gegen Apps anderer Hersteller)
 - [ ] SCIM-Server: Personen aus Entra ID, Google Workspace oder Okta empfangen, für Firmen, die
       dort führen
 - [ ] Einmalige Übernahme aus OpenLDAP, LLDAP, Authentik, Keycloak und einem echten AD (per LDAP)

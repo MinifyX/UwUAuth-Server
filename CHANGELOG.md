@@ -3,6 +3,27 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## Unreleased
+
+**Pairing with the UwUSuite.** UwUMail, UwULock and the suite's other servers connect with a
+code instead of copied client IDs, secrets and redirect addresses — and get the people who may
+use them over SCIM. How it works, down to the wire: [docs/suite.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/suite.md).
+
+- *Apps → Pair a UwUSuite app*: pick who may use the app and who is its admin, get a code
+  (`7KQ4-M2XD-9HFT`, once, 15 minutes) and a QR code. The dialog notices when the app took it.
+  Open codes can be withdrawn.
+- `POST /uwu/v1/pair` makes the app a confidential OpenID Connect client with PKCE and no
+  consent screen, maps its roles to groups (claim `roles`) and answers with issuer, client ID,
+  secret and a SCIM token. Guarded by rate limits (10 tries per address, 60 in all per 15
+  minutes), codes compared in constant time and used up in the same transaction.
+- **SCIM push**: the people who may use an app go there as users (disabled there when they may
+  no longer, deleted when they are gone for good), its groups with their members; only changes,
+  in the background. Works for any app with a SCIM address and token, not only suite apps.
+- A paired app's page shows its icon, program, roles (each with the groups that get it) and how
+  syncing goes; every app's page can now map groups to roles. "My apps" shows suite apps' icons.
+- `/uwu/v1/server` says `"product": "UwUAuth"` (was `UwUAuth Server`), `pairing` and `scim`;
+  `/.well-known/uwusuite` tells a suite app that knows only the domain where UwUAuth is.
+
 ## 0.3.0-beta.1
 
 **People, and three ways for apps to sign them in.** The first release to use: user management,

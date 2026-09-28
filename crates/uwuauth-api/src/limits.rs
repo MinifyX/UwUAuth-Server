@@ -135,6 +135,11 @@ pub struct Limits {
     /// OAuth's endpoints for apps (token, device authorization, registration), per address: apps
     /// refresh often, but not thousands of times a second.
     pub oauth: Limiter,
+    /// Pairing a suite app, per address: ten tries per fifteen minutes.
+    pub pairing: Limiter,
+    /// Pairing, from anywhere: sixty tries per fifteen minutes. With 60 bits in a code, that is
+    /// nothing to guess with, from however many addresses.
+    pub pairing_all: Limiter<()>,
 }
 
 impl Default for Limits {
@@ -147,6 +152,8 @@ impl Default for Limits {
             second_factor: Limiter::new(10, Duration::from_secs(60)),
             mail: Limiter::new(5, Duration::from_secs(5 * 60)),
             oauth: Limiter::new(600, Duration::from_millis(100)),
+            pairing: Limiter::new(10, Duration::from_secs(90)),
+            pairing_all: Limiter::new(60, Duration::from_secs(15)),
         }
     }
 }
@@ -170,6 +177,8 @@ impl Limits {
             second_factor: generous(),
             mail: generous(),
             oauth: generous(),
+            pairing: generous(),
+            pairing_all: generous(),
         }
     }
 }

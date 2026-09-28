@@ -23,6 +23,7 @@ pub mod policy;
 pub mod routes;
 pub mod session;
 pub mod settings;
+pub mod suite;
 pub mod tokens;
 pub mod totp;
 mod web;
@@ -133,6 +134,8 @@ pub struct AppState {
     pub memory: Arc<memory::Memory>,
     /// The keys tokens are signed with, made on first use.
     pub keys: Arc<tokio::sync::OnceCell<oidc::keys::Keys>>,
+    /// Wakes the task that pushes people and groups to apps over SCIM.
+    pub scim: Arc<suite::scim::Pusher>,
 }
 
 impl AppState {
@@ -163,6 +166,7 @@ impl AppState {
             party,
             memory: Arc::default(),
             keys: Arc::default(),
+            scim: Arc::default(),
         })
     }
 
@@ -215,6 +219,7 @@ pub fn router(state: AppState) -> Router {
         .merge(settings::routes())
         .merge(routes::routes())
         .merge(oidc::routes())
+        .merge(suite::routes())
         .merge(web::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .merge(imports)

@@ -170,7 +170,7 @@ fn registration_from(row: &Row<'_>) -> rusqlite::Result<RegistrationToken> {
     })
 }
 
-fn write_app(tx: &rusqlite::Transaction<'_>, app: &App, insert: bool) -> rusqlite::Result<()> {
+pub(crate) fn write_app(tx: &rusqlite::Transaction<'_>, app: &App, insert: bool) -> rusqlite::Result<()> {
     let sql = if insert {
         format!(
             "INSERT INTO apps ({APP_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \

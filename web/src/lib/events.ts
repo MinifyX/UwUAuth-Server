@@ -232,6 +232,26 @@ export function eventText(event: AuditEvent, names: Names): string {
         ...vars,
         token: text(d.token),
       });
+    case 'app_paired':
+      return t('„{name}“ ({product}) hat sich mit dem Kopplungscode von {actor} gekoppelt.', {
+        ...vars,
+        product: text(d.product),
+      });
+    case 'app_pairing_refused':
+      return t('Ein Kopplungsversuch mit einem falschen Code wurde abgelehnt.', vars);
+    case 'pairing_code_created':
+      return t('{actor} hat einen Kopplungscode erstellt.', vars);
+    case 'pairing_code_deleted':
+      return t('{actor} hat einen Kopplungscode zurückgezogen.', vars);
+    case 'app_scim_changed':
+      return t('{actor} hat den SCIM-Abgleich für „{name}“ eingerichtet.', vars);
+    case 'app_scim_removed':
+      return t('{actor} hat den SCIM-Abgleich für „{name}“ beendet.', vars);
+    case 'app_scim_failed':
+      return t('Der SCIM-Abgleich mit „{name}“ ging schief: {error}', {
+        ...vars,
+        error: text(d.error),
+      });
     case 'registration_token_created':
       return t('{actor} hat das Registrierungs-Token „{name}“ erstellt.', vars);
     case 'app_login':
@@ -264,6 +284,8 @@ export function alarming(kind: string): boolean {
     kind === 'login_refused' ||
     kind === 'reauth_failed' ||
     kind === 'app_refused' ||
+    kind === 'app_pairing_refused' ||
+    kind === 'app_scim_failed' ||
     kind === 'refresh_token_reused'
   );
 }
