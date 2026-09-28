@@ -114,5 +114,5 @@ person has typed the code on their phone and confirmed. The app needs the device
 An admin makes a **registration token** (*Apps → Registration tokens*: a name, how many apps may
 register with it, how long it works). An app posts its metadata to `/oauth/register` with it as
 bearer token and gets its client ID and secret. Redirect addresses there have to be `https`,
-`http` to the device itself, or the app's own scheme. The UwUSuite's pairing (stage 4) builds on
-this.
+`http` to the device itself, or the app's own scheme. UwUSuite apps connect with a pairing code
+instead, which also sets up SCIM: see [Pairing with the UwUSuite](suite.md).

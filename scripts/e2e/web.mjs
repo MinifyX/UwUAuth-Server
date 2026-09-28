@@ -14,6 +14,9 @@
 // an app that asks for it (`prompt=login`), a TV that connects with a code typed in the browser,
 // the pages for refusals and broken apps, and signing out from an app.
 //
+// Before that, the UwUSuite: a pairing code from the admin portal, taken by this script as if
+// it were UwULock, and the paired app's page.
+//
 // Runs in the Playwright image (mcr.microsoft.com/playwright). Passkeys come from Chrome's
 // virtual authenticator. Exits non-zero on the first failure, with a screenshot of every open
 // page in the screenshot dir; E2E_SHOTS=1 keeps one of every step too.
@@ -311,7 +314,57 @@ async function run() {
     await admin.goto(`${base}/admin#/events`);
     await admin.getByText("Nyu Neko hat UwUAuth eingerichtet.").waitFor();
 
+    await suite(admin);
     await oidc(admin);
+}
+
+/** Pairing a UwUSuite app: a code in the admin portal, taken by this script as the app. */
+async function suite(admin) {
+    await admin.goto(`${base}/admin#/apps`);
+    await title(admin, "Apps");
+    await admin.getByRole("button", { name: "UwUSuite-App koppeln" }).click();
+    const dialog = admin.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Code erstellen" }).click();
+    const code = (await dialog.locator(".pairing-code").innerText()).trim();
+    if (!/^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(code))
+        throw new Error(`not a pairing code: ${code}`);
+    await shot(admin, "admin-pairing-code");
+    const info = await (await fetch(`${base}/uwu/v1/server`)).json();
+    if (info.product !== "UwUAuth" || !(info.pairing >= 1))
+        throw new Error(`/uwu/v1/server: ${JSON.stringify(info)}`);
+    const url = "http://localhost:18745";
+    const response = await fetch(`${base}/uwu/v1/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+            code: code.toLowerCase(),
+            app: {
+                product: "UwULock",
+                version: "0.6.0",
+                name: "UwULock (Test)",
+                url,
+                // One pink pixel.
+                icon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+                redirectUris: [`${url}/identity/connect/oidc-signin`],
+                roles: [
+                    { id: "admin", name: "Administrator" },
+                    { id: "user", name: "Person mit Tresor" },
+                ],
+            },
+        }),
+    });
+    const paired = await response.json();
+    if (!response.ok || !paired.clientSecret || paired.issuer !== info.issuer)
+        throw new Error(`/uwu/v1/pair: ${response.status} ${JSON.stringify(paired)}`);
+    // The dialog notices by itself.
+    await dialog.getByText("„UwULock (Test)“ ist gekoppelt.").waitFor();
+    await shot(admin, "admin-pairing-done");
+    await dialog.getByRole("button", { name: "Zur App" }).click();
+    await title(admin, "UwULock (Test)");
+    await admin.getByText("UwULock 0.6.0").waitFor();
+    await shot(admin, "admin-app-suite");
+    await admin.getByText("Person mit Tresor").scrollIntoViewIfNeeded();
+    await shot(admin, "admin-app-suite-roles");
 }
 
 /** OpenID Connect, end to end, with the admin's browser as the person and this script as the app. */

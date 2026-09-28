@@ -13,6 +13,8 @@ Scripts use an **API token** instead of a session.
 - [Events, log, backups](#events-log-backups)
 - [Import and export](#import-and-export)
 
+Apps, pairing codes and SCIM are in [Pairing with the UwUSuite](suite.md#the-admin-api).
+
 ## Tokens
 
 An admin makes a token in the portal (*API tokens*): a name, *read only* or not, and optionally
