@@ -210,23 +210,27 @@ Das Herz. Noch kein Protokoll nach außen, aber alles, was die späteren Protoko
 - [ ] In CI: die OpenID-Conformance-Suite (als eigener, wöchentlicher Job)
 - [x] Getestet mit Grafana, Forgejo und Nextcloud im echten Browser (wöchentlich und vor Releases)
 
-### Stufe 3 — LDAP im Stil von Active Directory (0.3)
+### Stufe 3 — LDAP im Stil von Active Directory (0.3, fertig)
 
-- [ ] LDAPv3-Server: Bind (Konto-Passwort oder App-Passwort), Search, Compare, WhoAmI (RFC 4532),
-      StartTLS und LDAPS, Paged Results (RFC 2696), Root DSE und Schema
-- [ ] Zwei Sichten auf dieselben Daten, gleichzeitig:
+- [x] LDAPv3-Server: Bind (Konto-Passwort oder App-Passwort), Search, Compare, WhoAmI (RFC 4532),
+      StartTLS und LDAPS, Paged Results (RFC 2696), Root DSE
+- [ ] Ein Schema-Eintrag (`cn=schema`) für Werkzeuge, die danach fragen
+- [x] Zwei Sichten auf dieselben Daten, gleichzeitig:
   - **RFC 2307bis / inetOrgPerson** für Linux (SSSD), NAS und die meisten Apps
   - **AD-Stil**: `sAMAccountName`, `userPrincipalName`, `memberOf`, `objectGUID`, `objectSid`,
     `userAccountControl`, `primaryGroupID`, `distinguishedName`, damit Apps mit der Einstellung
     „Active Directory“ funktionieren
-- [ ] Verschachtelte Gruppen, auch über `LDAP_MATCHING_RULE_IN_CHAIN`
+- [x] Verschachtelte Gruppen, auch über `LDAP_MATCHING_RULE_IN_CHAIN`
       (`1.2.840.113556.1.4.1941`), wie Apps es von AD kennen
-- [ ] Dienstkonten für Apps: nur lesen, auf Teilbäume beschränkt
-- [ ] Passwort ändern über LDAP: Password Modify (RFC 3062) und AD-`unicodePwd`
+- [x] Dienstkonten für Apps: nur lesen; Personen sehen über LDAP nur sich selbst und ihre Gruppen
+- [ ] Dienstkonten auf Teilbäume oder Gruppen beschränken
+- [x] Passwort ändern über LDAP: Password Modify (RFC 3062) und AD-`unicodePwd`
 - [ ] Schreiben über LDAP (Personen anlegen) erst, wenn es gebraucht wird
-- [ ] Getestet mit: `ldapsearch`, SSSD, Synology- und QNAP-Verzeichnisdienst, Nextcloud,
-      Jellyfin-LDAP-Plugin, Forgejo, Proxmox (AD-Realm), Home Assistant
-- [ ] Kein Kerberos, kein NTLM, kein Domänenbeitritt (siehe Leitlinien)
+- [x] Getestet mit `ldapsearch`, SSSD (in jedem CI-Lauf) und Nextcloud (wöchentlich und vor Releases)
+- [ ] Getestet mit Synology- und QNAP-Verzeichnisdienst, Jellyfin-LDAP-Plugin, Proxmox (AD-Realm),
+      Home Assistant — braucht echte Geräte bzw. mehr Zeit im CI
+- [x] Kein Kerberos, kein NTLM, kein Domänenbeitritt (siehe Leitlinien)
+- [x] Admin-Portal: LDAP-Einstellungen auf einen Blick, Konten für Apps (Passwort einmal gezeigt)
 
 ### Stufe 4 — Kopplung mit der UwUSuite (0.4)
 

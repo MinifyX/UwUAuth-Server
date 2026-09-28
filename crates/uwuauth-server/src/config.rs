@@ -73,6 +73,17 @@ pub struct Config {
     /// Mail server, language and time zone a new server starts with, until an admin saves others
     /// in the portal.
     pub start_settings: Settings,
+    /// Where LDAP (with StartTLS) listens: off unless set.
+    pub ldap_listen: Option<SocketAddr>,
+    /// Where LDAPS listens: off unless set.
+    pub ldaps_listen: Option<SocketAddr>,
+    /// The directory's base DN; from the public name when not set.
+    pub ldap_base: Option<String>,
+    /// Binds with a password without TLS. Only for a network nobody else is on.
+    pub ldap_plain_bind: bool,
+    /// A certificate for LDAP of its own, for a server that has none because a proxy does its
+    /// HTTPS.
+    pub ldap_cert: Option<(PathBuf, PathBuf)>,
 }
 
 impl Default for Config {
@@ -87,6 +98,11 @@ impl Default for Config {
             channel: None,
             login_attempts: 10,
             start_settings: Settings::default(),
+            ldap_listen: None,
+            ldaps_listen: None,
+            ldap_base: None,
+            ldap_plain_bind: false,
+            ldap_cert: None,
         }
     }
 }
@@ -169,6 +185,28 @@ impl Config {
             });
         }
 
+        let address = |name: &str| -> Result<Option<SocketAddr>, String> {
+            match var(name) {
+                None => Ok(None),
+                Some(value) if matches!(value.as_str(), "off" | "none") => Ok(None),
+                Some(value) => {
+                    value.parse().map(Some).map_err(|_| format!("{name} is not an address like 0.0.0.0:10389: {value}"))
+                }
+            }
+        };
+        config.ldap_listen = address("UWUAUTH_LDAP_LISTEN")?;
+        config.ldaps_listen = address("UWUAUTH_LDAPS_LISTEN")?;
+        config.ldap_base = var("UWUAUTH_LDAP_BASE_DN");
+        if let Some(plain) = var("UWUAUTH_LDAP_PLAIN_BIND") {
+            config.ldap_plain_bind =
+                switch(&plain).ok_or_else(|| format!("UWUAUTH_LDAP_PLAIN_BIND must be on or off: {plain}"))?;
+        }
+        match (var("UWUAUTH_LDAP_TLS_CERT"), var("UWUAUTH_LDAP_TLS_KEY")) {
+            (Some(cert), Some(key)) => config.ldap_cert = Some((PathBuf::from(cert), PathBuf::from(key))),
+            (None, None) => {}
+            _ => return Err("UWUAUTH_LDAP_TLS_CERT and UWUAUTH_LDAP_TLS_KEY go together".into()),
+        }
+
         config.tls = match var("UWUAUTH_TLS").as_deref().map(str::to_ascii_lowercase).as_deref() {
             None | Some("off" | "proxy") => TlsMode::Off,
             Some("files") => TlsMode::Files {
@@ -216,6 +254,15 @@ impl Config {
     /// ask for a new one — Let's Encrypt allows only a few per week.
     pub fn acme_cache(&self) -> PathBuf {
         self.data_dir.join("acme")
+    }
+
+    /// The LDAP base DN: set, or from the public name (`auth.example.com` → `dc=example,dc=com`).
+    pub fn ldap_base(&self) -> String {
+        self.ldap_base.clone().unwrap_or_else(|| {
+            let url = self.base_url();
+            let host = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest).to_string();
+            uwuauth_ldap::directory::default_base(&host)
+        })
     }
 
     /// How people and apps write this server down.
@@ -405,6 +452,17 @@ mod tests {
         assert!(config(&[("UWUAUTH_SMTP_HOST", "mail.example.com")]).is_err(), "no sender");
         assert!(config(&[("UWUAUTH_LANGUAGE", "fr")]).is_err());
         assert!(config(&[("UWUAUTH_TIMEZONE", "Mars/Olympus")]).is_err());
+    }
+
+    #[test]
+    fn ldap_is_off_unless_asked_for() {
+        let off = config(&[]).unwrap();
+        assert!(off.ldap_listen.is_none() && off.ldaps_listen.is_none());
+        let on = config(&[("UWUAUTH_LDAP_LISTEN", "0.0.0.0:10389"), ("UWUAUTH_LDAP_PLAIN_BIND", "on")]).unwrap();
+        assert_eq!(on.ldap_listen.unwrap().port(), 10389);
+        assert!(on.ldap_plain_bind);
+        assert!(config(&[("UWUAUTH_LDAP_LISTEN", "everywhere")]).is_err());
+        assert!(config(&[("UWUAUTH_LDAP_TLS_CERT", "/certs/cert.pem")]).is_err(), "a certificate needs its key");
     }
 
     #[test]

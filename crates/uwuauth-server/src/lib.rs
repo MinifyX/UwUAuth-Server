@@ -35,6 +35,19 @@ pub async fn app_state(config: &Config, store: Store, logs: Arc<LogBuffer>) -> R
     api.backups = config.backups();
     api.login_attempts = config.login_attempts;
     api.start_settings = config.start_settings.clone();
+    let enabled = config.ldap_listen.is_some() || config.ldaps_listen.is_some();
+    api.ldap = enabled.then(|| {
+        let base = config.ldap_base();
+        uwuauth_api::LdapInfo {
+            domain: uwuauth_ldap::dn::Dn::parse(&base)
+                .map(|dn| uwuauth_ldap::directory::domain_of(&dn))
+                .unwrap_or_default(),
+            base,
+            ldap: config.ldap_listen,
+            ldaps: config.ldaps_listen,
+            plain_bind: config.ldap_plain_bind,
+        }
+    });
     let state = AppState::new(store, api, updates::build().version, logs).await?;
     {
         let build = updates::build();
@@ -60,7 +73,10 @@ pub async fn run(
         .map_err(|error| format!("cannot listen on {}: {error}", config.listen))?;
     let local = listener.local_addr().map_err(|error| error.to_string())?;
 
+    let prepared = tls::prepare(&config)?;
     let state = app_state(&config, store, logs).await?;
+    let (stopped_tx, stopped) = tokio::sync::watch::channel(false);
+    start_ldap(&config, &state, prepared.ldap.clone(), stopped).await?;
     spawn_maintenance(config.clone(), state.clone());
     updates::spawn(Arc::new(config.clone()), state.update.clone());
     if state.mailer.enabled() {
@@ -74,6 +90,7 @@ pub async fn run(
         async move {
             stop.await;
             tracing::info!("stopping");
+            let _ = stopped_tx.send(true);
             handle.graceful_shutdown(Some(GRACE));
         }
     });
@@ -95,7 +112,42 @@ pub async fn run(
     if let Some(ready) = ready {
         let _ = ready.send(local);
     }
-    tls::serve(listener, app, &config, handle).await
+    tls::serve(listener, app, prepared.http, handle).await
+}
+
+/// LDAP and LDAPS, when `.env` asks for them. LDAPS needs a certificate; plain LDAP without one
+/// offers no StartTLS, and then only takes passwords if `UWUAUTH_LDAP_PLAIN_BIND=on`.
+async fn start_ldap(
+    config: &Config,
+    state: &AppState,
+    tls: tls::Slot,
+    stopped: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
+    if config.ldap_listen.is_none() && config.ldaps_listen.is_none() {
+        return Ok(());
+    }
+    let has_tls = tls.read().is_some();
+    if config.ldaps_listen.is_some() && !has_tls {
+        return Err(
+            "LDAPS needs a certificate: UWUAUTH_TLS=acme or files, or UWUAUTH_LDAP_TLS_CERT and UWUAUTH_LDAP_TLS_KEY"
+                .into(),
+        );
+    }
+    let source: uwuauth_ldap::TlsSource = Arc::new(move || tls.read().clone());
+    let ldap_config = uwuauth_ldap::LdapConfig { base: config.ldap_base(), allow_plain_bind: config.ldap_plain_bind };
+    let ldap = uwuauth_ldap::Ldap::new(state.clone(), ldap_config.clone(), Some(source)).await?;
+    for (address, ldaps) in [(config.ldap_listen, false), (config.ldaps_listen, true)] {
+        let Some(address) = address else { continue };
+        let listener = tokio::net::TcpListener::bind(address)
+            .await
+            .map_err(|error| format!("cannot listen on {address}: {error}"))?;
+        let mut stopped = stopped.clone();
+        tracing::info!(listen = %address, base = %ldap_config.base, ldaps, starttls = has_tls, plain_bind = ldap_config.allow_plain_bind, "serving LDAP");
+        tokio::spawn(ldap.clone().serve(listener, ldaps, async move {
+            let _ = stopped.wait_for(|stopped| *stopped).await;
+        }));
+    }
+    Ok(())
 }
 
 /// Ctrl-C at a terminal, SIGTERM from `docker stop`. The second matters more: a process that is

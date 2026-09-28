@@ -15,15 +15,12 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new().route("/uwu/v1/server", get(server))
 }
 
-/// The protocols this build speaks.
-const PROTOCOLS: &[&str] = &["oidc"];
-
 async fn server(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "product": "UwUAuth Server",
         "version": state.version,
         "issuer": state.config.public,
-        "protocols": PROTOCOLS,
+        "protocols": if state.config.ldap.is_some() { json!(["oidc", "ldap"]) } else { json!(["oidc"]) },
         "openidConfiguration": format!("{}/.well-known/openid-configuration", state.config.public),
     }))
 }

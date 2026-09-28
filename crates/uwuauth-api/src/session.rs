@@ -71,7 +71,8 @@ pub(crate) fn client_ip(parts: &Parts, trust_forwarded: bool) -> IpAddr {
         .unwrap_or(IpAddr::from([0, 0, 0, 0]))
 }
 
-fn canonical(ip: IpAddr) -> IpAddr {
+/// An IPv4 address as itself, not mapped into IPv6.
+pub fn canonical(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
         v4 => v4,

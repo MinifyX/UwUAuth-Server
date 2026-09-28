@@ -1,0 +1,64 @@
+# Real apps signing in through UwUAuth, all in one Docker network: `run.sh` starts them, sets
+# them up and drives a browser through their "Sign in with UwUAuth" buttons.
+#
+# UwUAuth runs over plain HTTP here (http://uwuauth:8443): the apps and the browser reach it by
+# that name inside the network, and nothing leaves it.
+name: uwuauth-interop
+
+services:
+  uwuauth:
+    image: uwuauth-server:interop
+    environment:
+      UWUAUTH_PUBLIC: http://uwuauth:8443
+      UWUAUTH_TLS: "off"
+      UWUAUTH_UPDATE_CHECK: "off"
+      UWUAUTH_LOGIN_ATTEMPTS: "200"
+      UWUAUTH_LDAP_LISTEN: 0.0.0.0:10389
+      UWUAUTH_LDAP_PLAIN_BIND: "on"
+      UWUAUTH_LDAP_BASE_DN: dc=example,dc=com
+    ports:
+      - "127.0.0.1:${UWUAUTH_PORT:-28491}:8443"
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16
+    environment:
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      FORGEJO__oauth2_client__USERNAME: nickname
+      FORGEJO__oauth2_client__ACCOUNT_LINKING: auto
+      FORGEJO__service__DISABLE_REGISTRATION: "false"
+      FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"
+      FORGEJO__log__LEVEL: warn
+    profiles: [oidc]
+
+  grafana:
+    image: grafana/grafana:12.4.1
+    environment:
+      GF_SERVER_ROOT_URL: http://grafana:3000/
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: UwUAuth
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${GRAFANA_CLIENT_ID:-}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_CLIENT_SECRET:-}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid profile email groups
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: http://uwuauth:8443/oauth/authorize
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://uwuauth:8443/oauth/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: http://uwuauth:8443/oauth/userinfo
+      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH: preferred_username
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(groups[*], 'admins') && 'Admin' || 'Viewer'"
+      GF_LOG_LEVEL: warn
+    profiles: [oidc]
+
+  nextcloud:
+    image: nextcloud:33-apache
+    environment:
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: ncadmin
+      NEXTCLOUD_ADMIN_PASSWORD: nextcloud-admin-password
+      NEXTCLOUD_TRUSTED_DOMAINS: nextcloud
+      OVERWRITEPROTOCOL: http
+      OVERWRITECLIURL: http://nextcloud
+    profiles: [nextcloud]

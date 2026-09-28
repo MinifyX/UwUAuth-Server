@@ -1,0 +1,10 @@
+{
+  "name": "@uwuauth/interop",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.3.0",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

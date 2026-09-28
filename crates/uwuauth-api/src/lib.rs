@@ -68,6 +68,7 @@ pub struct ApiConfig {
     pub start_settings: Settings,
     /// An RSA key to sign with instead of making one (tests: making one takes a while).
     pub fixed_rsa_key: Option<Vec<u8>>,
+    pub ldap: Option<LdapInfo>,
 }
 
 impl ApiConfig {
@@ -83,8 +84,19 @@ impl ApiConfig {
             login_attempts: 10,
             start_settings: Settings::default(),
             fixed_rsa_key: None,
+            ldap: None,
         }
     }
+}
+
+/// How LDAP is set up, for the admin portal. None when it is off.
+#[derive(Debug, Clone)]
+pub struct LdapInfo {
+    pub base: String,
+    pub domain: String,
+    pub ldap: Option<std::net::SocketAddr>,
+    pub ldaps: Option<std::net::SocketAddr>,
+    pub plain_bind: bool,
 }
 
 /// What the last look for a newer release found, for the admin portal.

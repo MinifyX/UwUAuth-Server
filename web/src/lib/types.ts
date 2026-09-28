@@ -341,3 +341,30 @@ export type DeviceInfo = {
   scopes: string[];
   code: string;
 };
+
+/** GET /uwu/v1/ldap */
+export interface LdapInfo {
+  enabled: boolean;
+  base?: string;
+  domain?: string;
+  host?: string;
+  ldapPort?: number | null;
+  ldapsPort?: number | null;
+  plainBind?: boolean;
+  people?: string;
+  groups?: string;
+  services?: string;
+}
+
+/** An app's account for reading the directory over LDAP. */
+export interface LdapAccount {
+  id: string;
+  name: string;
+  description: string;
+  bindDn: string;
+  created: string;
+  lastUsed: string | null;
+  lastIp: string | null;
+  /** Only right after creating it or making a new one. */
+  secret?: string;
+}
