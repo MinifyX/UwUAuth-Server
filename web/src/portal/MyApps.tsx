@@ -24,7 +24,7 @@ export function AppTiles({ apps }: { apps: MyAppsData['apps'] }) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          <AppIcon name={app.name} size={44} />
+          <AppIcon name={app.name} size={44} src={app.icon} />
           <span className="app-tile-text">
             <b>{app.name}</b>
             {app.description && <small>{app.description}</small>}

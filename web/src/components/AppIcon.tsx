@@ -1,7 +1,30 @@
 import { appLetters } from '../lib/apps';
 
-/** An app's tile: its letters on a tint. No logos — the app's name says which one it is. */
-export function AppIcon({ name, size = 40 }: { name: string; size?: number }) {
+/**
+ * An app's tile: its letters on a tint. No logos — the app's name says which one it is. A paired
+ * UwUSuite app brings its own icon, which is shown instead.
+ */
+export function AppIcon({
+  name,
+  size = 40,
+  src,
+}: {
+  name: string;
+  size?: number;
+  src?: string | null;
+}) {
+  if (src)
+    return (
+      <img
+        className="app-icon app-icon-image"
+        src={src}
+        alt=""
+        aria-hidden="true"
+        width={size}
+        height={size}
+        style={{ borderRadius: size * 0.28 }}
+      />
+    );
   return (
     <span
       className="app-icon"

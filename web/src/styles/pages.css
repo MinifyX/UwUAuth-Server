@@ -1217,3 +1217,37 @@ button.stat:hover:not(:disabled) {
 .facts + .section-lead {
   margin-top: 10px;
 }
+
+/* ── UwUSuite pairing ──────────────────────────────────── */
+
+.app-icon-image {
+  object-fit: cover;
+  background: var(--uwu-canvas);
+}
+
+.pairing-code-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pairing-code {
+  flex: 1;
+  padding: 6px 10px;
+  text-align: center;
+  font-family: var(--uwu-mono);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  border-radius: var(--uwu-radius-control);
+  border: 1px solid var(--uwu-border);
+  background: var(--uwu-canvas);
+  user-select: all;
+}
+
+.pairing-done {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+}

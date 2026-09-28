@@ -287,6 +287,51 @@ export type App = {
   notes?: string;
   /** Only right after making it. */
   clientSecret?: string | null;
+  /** For a paired UwUSuite app: what it said about itself. */
+  suite?: SuiteInfo | null;
+  /** Where people and groups are pushed over SCIM, and how that goes. */
+  scim?: ScimInfo | null;
+};
+
+/** A role a paired suite app knows. */
+export type SuiteRole = { id: string; name: string; description: string };
+
+export type SuiteInfo = {
+  product: string;
+  version: string;
+  url: string;
+  roles: SuiteRole[];
+  pairedBy: string | null;
+  paired: string;
+  icon: string | null;
+};
+
+export type ScimInfo = {
+  baseUrl: string;
+  resources: ('User' | 'Group')[];
+  userName: 'email' | 'username';
+  synced: string | null;
+  tried: string | null;
+  error: string | null;
+  users: number;
+  groups: number;
+};
+
+export type PairingCode = {
+  id: string;
+  created: string;
+  createdBy: string | null;
+  expires: string;
+  allowedGroups: string[];
+  roleGroups: Record<string, string[]>;
+  open: boolean;
+  used: string | null;
+  appId: string | null;
+  /** Only right after making it. */
+  code?: string;
+  link?: string;
+  /** Once an app took it. */
+  app?: { id: string; name: string };
 };
 
 export type AppTemplate = {
@@ -319,6 +364,8 @@ export type MyApps = {
     description: string;
     launchUrl: string;
     template: string | null;
+    /** A paired suite app's own icon. */
+    icon?: string | null;
   }[];
   connected: {
     id: string;

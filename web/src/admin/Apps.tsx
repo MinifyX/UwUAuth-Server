@@ -14,18 +14,23 @@ import type { App, RegistrationToken } from '../lib/types';
 import { Confirm } from '../portal/Security';
 import { AppPage } from './AppDetail';
 import { NewApp } from './NewApp';
+import { OpenCodes, PairDialog } from './Pairing';
 
 /**
- * Apps: everything that signs people in through UwUAuth (OpenID Connect), and the tokens apps
- * register themselves with. `/apps/new` makes one, `/apps/<id>` is one.
+ * Apps: everything that signs people in through UwUAuth (OpenID Connect), UwUSuite apps paired
+ * with a code, and the tokens apps register themselves with. `/apps/new` makes one,
+ * `/apps/<id>` is one.
  */
 export function Apps({ id }: { id: string | null }) {
   useLanguage();
+  // Counts up when a pairing dialog closes: the list and the open codes load again.
+  const [version, setVersion] = useState(0);
   if (id === 'new') return <NewApp />;
   if (id) return <AppPage key={id} id={id} />;
   return (
     <>
-      <AppList />
+      <AppList key={version} onPaired={() => setVersion((count) => count + 1)} />
+      <OpenCodes version={version} />
       <RegistrationTokens />
     </>
   );
@@ -37,6 +42,8 @@ export function AppBadges({ app }: { app: App }) {
   return (
     <>
       {app.disabled && <Badge tone="alarm">{t('aus')}</Badge>}
+      {app.suite && <Badge tone="ok">UwUSuite</Badge>}
+      {app.scim?.error && <Badge tone="alarm">{t('SCIM-Fehler')}</Badge>}
       {app.public && <Badge>{t('öffentlich')}</Badge>}
       {app.requireMfa && <Badge>{t('zweiter Faktor')}</Badge>}
       {app.consent && <Badge>{t('fragt nach')}</Badge>}
@@ -45,9 +52,10 @@ export function AppBadges({ app }: { app: App }) {
   );
 }
 
-function AppList() {
+function AppList({ onPaired }: { onPaired: () => void }) {
   useLanguage();
   const [list, setList] = useState<App[] | null>(null);
+  const [pairing, setPairing] = useState(false);
   useEffect(() => {
     api<App[]>('/uwu/v1/apps').then(setList, (e) => toast(errorText(e), 'error'));
   }, []);
@@ -55,10 +63,16 @@ function AppList() {
     <>
       <PageTitle
         actions={
-          <button type="button" className="primary" onClick={() => go('/apps/new')}>
-            <Icon name="plus" />
-            {t('Neue App')}
-          </button>
+          <>
+            <button type="button" onClick={() => setPairing(true)}>
+              <Icon name="link" />
+              {t('UwUSuite-App koppeln')}
+            </button>
+            <button type="button" className="primary" onClick={() => go('/apps/new')}>
+              <Icon name="plus" />
+              {t('Neue App')}
+            </button>
+          </>
         }
       >
         {t('Apps')}
@@ -86,13 +100,16 @@ function AppList() {
                 data-disabled={app.disabled || undefined}
                 onClick={() => go(`/apps/${app.id}`)}
               >
-                <AppIcon name={app.name} size={40} />
+                <AppIcon name={app.name} size={40} src={app.suite?.icon} />
                 <span className="person-text">
                   <b>
                     {app.name}
                     <AppBadges app={app} />
                   </b>
-                  <small className="mono">{app.clientId}</small>
+                  <small className="mono">
+                    {app.suite ? `${app.suite.product} ${app.suite.version} · ` : ''}
+                    {app.clientId}
+                  </small>
                 </span>
                 <small className="person-seen">
                   <Day iso={app.created} />
@@ -102,6 +119,14 @@ function AppList() {
             </li>
           ))}
         </ul>
+      )}
+      {pairing && (
+        <PairDialog
+          onClose={() => {
+            setPairing(false);
+            onPaired();
+          }}
+        />
       )}
     </>
   );

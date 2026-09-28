@@ -17,6 +17,7 @@ import type { App, Group } from '../lib/types';
 import { groupName } from '../lib/words';
 import { Confirm } from '../portal/Security';
 import { AppBadges } from './Apps';
+import { type RoleMapping, RolesEditor, ScimSection, SuiteSection } from './AppSuite';
 import { GrantChoices, Notes } from './NewApp';
 
 /** What the page lets one change, as the API names it. */
@@ -38,6 +39,7 @@ type Draft = {
   requirePkce: boolean;
   accessTokenMinutes: number;
   refreshTokenDays: number;
+  roles: RoleMapping[];
 };
 
 function draftOf(app: App): Draft {
@@ -59,6 +61,7 @@ function draftOf(app: App): Draft {
     requirePkce: app.requirePkce,
     accessTokenMinutes: app.accessTokenMinutes,
     refreshTokenDays: app.refreshTokenDays,
+    roles: app.roles,
   };
 }
 
@@ -151,7 +154,7 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
         }
       >
         <span className="title-with-icon">
-          <AppIcon name={app.name} size={36} />
+          <AppIcon name={app.name} size={36} src={app.suite?.icon} />
           {app.name}
         </span>
       </PageTitle>
@@ -188,6 +191,7 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
         </div>
       </Section>
       {app.notes && <Notes text={app.notes} name={app.name} />}
+      {app.suite && <SuiteSection suite={app.suite} />}
 
       <Section title={t('Allgemein')}>
         <div className="form">
@@ -279,6 +283,22 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
           />
         </Row>
       </Section>
+
+      <Section
+        title={t('Rollen')}
+        lead={t(
+          'Welche Gruppen welche Rolle in der App haben – die App liest sie aus dem Claim „roles“.',
+        )}
+      >
+        <RolesEditor
+          roles={draft.roles}
+          known={app.suite?.roles ?? null}
+          groups={groups}
+          onChange={(roles) => set({ roles })}
+        />
+      </Section>
+
+      <ScimSection app={app} onChanged={onSaved} />
 
       <Section title={t('Adressen')}>
         <div className="field">
