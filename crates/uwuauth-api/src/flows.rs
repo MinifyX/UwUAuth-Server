@@ -266,7 +266,7 @@ async fn forgot_password_mails_a_link_that_works_once() {
     assert_eq!(answer.status(), StatusCode::ACCEPTED);
     let nobody = anybody.post("/uwu/v1/forgot", json!({ "login": "nobody@example.com" })).await;
     assert_eq!(nobody.status(), StatusCode::ACCEPTED, "the same answer either way");
-    let link = server.mail_to("nyu@example.com").unwrap().link().unwrap().to_string();
+    let link = server.link_to("nyu@example.com", "/#/reset?").await;
     assert!(link.contains("/#/reset?token="));
     let token = token_of(&link);
     anybody.ok("POST", &format!("/uwu/v1/links/reset/{token}"), json!({ "password": "a brand new password" })).await;
@@ -599,7 +599,7 @@ async fn a_reset_link_still_asks_for_the_second_factor() {
 
     let thief = server.browser();
     thief.post("/uwu/v1/forgot", json!({ "login": "nyu@example.com" })).await;
-    let reset = token_of(server.mail_to("nyu@example.com").unwrap().link().unwrap());
+    let reset = token_of(&server.link_to("nyu@example.com", "/#/reset?").await);
     let options = thief.request("POST", &format!("/uwu/v1/links/reset/{reset}/passkey-options"), Some(json!({}))).await;
     if options.status() == StatusCode::OK {
         let key = crate::webauthn::tests::SoftKey::new();
