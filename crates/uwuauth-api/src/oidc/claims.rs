@@ -1,8 +1,8 @@
 //! What an app learns about a person: the claims, by scope.
 //!
 //! - `openid`: `sub`, the person's id, which never changes (names and addresses may).
-//! - `profile`: `name`, `preferred_username`, `given_name`, `family_name`, `picture`, `locale`,
-//!   `updated_at`.
+//! - `profile`: `name`, `preferred_username` and `nickname` (both the user name: Forgejo and Gitea
+//!   read the second), `given_name`, `family_name`, `picture`, `locale`, `updated_at`.
 //! - `email`: `email`, `email_verified`.
 //! - `groups`: `groups`, the names of every group the person is in (through groups inside groups
 //!   too), not counting `everyone`.
@@ -31,6 +31,7 @@ pub const SUPPORTED: &[&str] = &[
     "at_hash",
     "name",
     "preferred_username",
+    "nickname",
     "given_name",
     "family_name",
     "picture",
@@ -73,6 +74,7 @@ pub async fn about(
     if has("profile") {
         claims.insert("name".into(), json!(person.display_name));
         claims.insert("preferred_username".into(), json!(person.username));
+        claims.insert("nickname".into(), json!(person.username));
         if let Some(given) = &person.given_name {
             claims.insert("given_name".into(), json!(given));
         }

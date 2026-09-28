@@ -179,6 +179,7 @@ async fn a_public_app_signs_in_with_pkce_and_gets_verified_tokens() {
     assert_eq!(id_token["sub"], me["id"]);
     assert_eq!((id_token["aud"].as_str(), id_token["nonce"].as_str()), (Some(client_id.as_str()), Some("n-0S6")));
     assert_eq!(id_token["preferred_username"], "admin");
+    assert_eq!(id_token["nickname"], "admin");
     assert_eq!(id_token["groups"], json!(["admins"]));
     assert_eq!(id_token["at_hash"], crate::oidc::keys::half_hash(tokens["access_token"].as_str().unwrap()));
     let (status, info) = userinfo(&server, tokens["access_token"].as_str().unwrap()).await;

@@ -73,7 +73,7 @@ Client authentication at the token endpoint: `client_secret_basic`, `client_secr
 | Scope | Claims |
 | --- | --- |
 | `openid` | `sub` — the person's id, which never changes (names and addresses may) |
-| `profile` | `name`, `preferred_username`, `given_name`, `family_name`, `picture`, `locale`, `updated_at` |
+| `profile` | `name`, `preferred_username` and `nickname` (both the user name), `given_name`, `family_name`, `picture`, `locale`, `updated_at` |
 | `email` | `email`, `email_verified` |
 | `groups` | `groups`: the names of every group the person is in, groups inside groups included, `everyone` left out |
 | `roles` | `roles`: what the app's role mapping makes of the groups (*admins → admin*, …) |
