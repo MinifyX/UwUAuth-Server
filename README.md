@@ -31,10 +31,12 @@ for a family first and a small office second, and built so that a company would 
   you pass on a changed version, or run one for others, its source stays open too.
 - **No support.** Issues and pull requests are okay, but I might answer late or not at all.
 
-> **Status: 0.3 beta.** People, groups, passkeys, two-step login, invitations, kids' accounts,
-> the self-service and admin portal (0.1), signing in to apps with OpenID Connect (0.2), and LDAP
-> in Active Directory's dialect for a NAS, Linux logins and older apps (0.3). A beta: try it at
-> home, not yet for the only way into something important. Pairing with the UwUSuite is next.
+> **Status: 0.4 beta.** People, groups, passkeys, two-step login, invitations, kids' accounts,
+> the self-service and admin portal (0.1), signing in to apps with OpenID Connect (0.2), LDAP
+> in Active Directory's dialect for a NAS, Linux logins and older apps (0.3), and pairing with
+> the UwUSuite by code, with people pushed to apps over SCIM (0.4, [docs/suite.md](docs/suite.md)).
+> A beta: try it at home, not yet for the only way into something important. Forward auth for
+> reverse proxies is next.
 > The [plan](docs/plan.md) has every step (in German).
 
 ## What it will do
@@ -58,7 +60,8 @@ for a family first and a small office second, and built so that a company would 
   PCs to a domain, Kerberos, NTLM and group policies, no — that is what Samba is for.
 - **Talk to anybody behind your back.** No telemetry. The only connections it opens on its own
   are Let's Encrypt (if you use it), your mail server, a daily look at GitHub for a newer
-  release (`UWUAUTH_UPDATE_CHECK=off` stops it), the sign-out notices apps ask for, and — only
+  release (`UWUAUTH_UPDATE_CHECK=off` stops it), the sign-out notices apps ask for, people and
+  groups pushed over SCIM to apps an admin paired or set up, and — only
   if an admin turns it on — Have I Been Pwned, which gets the first five characters of a
   password's SHA-1 hash and never the password.
 
@@ -72,11 +75,11 @@ curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/latest/download/i
 sudo bash install.sh
 ```
 
-While 0.3 is a beta, the newest `install.sh` is the beta's (`latest` still points to 0.0.1,
+While 0.4 is a beta, the newest `install.sh` is the beta's (`latest` still points to 0.0.1,
 which knows neither `--admin` nor `--ldap`):
 
 ```bash
-curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/download/v0.3.0-beta.1/install.sh
+curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/download/v0.4.0-beta.1/install.sh
 sudo bash install.sh --version beta
 ```
 

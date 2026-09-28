@@ -3,11 +3,12 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
-## Unreleased
+## 0.4.0-beta.1
 
 **Pairing with the UwUSuite.** UwUMail, UwULock and the suite's other servers connect with a
 code instead of copied client IDs, secrets and redirect addresses — and get the people who may
-use them over SCIM. How it works, down to the wire: [docs/suite.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/suite.md).
+use them over SCIM. This is UwUAuth's side; each suite app brings its side in its own release
+(UwULock Server 0.6 first). How it works, down to the wire: [docs/suite.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/suite.md).
 
 - *Apps → Pair a UwUSuite app*: pick who may use the app and who is its admin, get a code
   (`7KQ4-M2XD-9HFT`, once, 15 minutes) and a QR code. The dialog notices when the app took it.
