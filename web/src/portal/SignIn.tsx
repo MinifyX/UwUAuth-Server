@@ -213,7 +213,7 @@ export function SignIn() {
 }
 
 /** The second step: a code from the app, a passkey, or a recovery code. */
-function SecondStep({
+export function SecondStep({
   pending,
   methods,
   onBack,

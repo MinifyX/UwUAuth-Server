@@ -188,5 +188,7 @@
   "Du betreust noch niemanden. Leg ein Konto an – mit einem Einrichtungslink richtet die Person es selbst ein.": "You don't look after anybody yet. Make an account – with a setup link, the person sets it up themselves.",
   "Ein betreutes Konto wird von der Verwaltung gepflegt: Sie kann Namen, Passwort und Zeitfenster ändern und das Konto sperren.": "The administration looks after a managed account: it can change the names, the password and the time windows, and disable the account.",
   "Admins": "Admins",
-  "Alle": "Everyone"
+  "Alle": "Everyone",
+  "Bestätige mit deinem Passkey – ein Passwort allein reicht hier nicht.": "Confirm with your passkey — a password alone is not enough here.",
+  "Setz hier ein neues Passwort. Dein Passkey oder deine Authenticator-App bleibt und wird danach abgefragt.": "Set a new password here. Your passkey or authenticator app stays and is asked for next."
 }

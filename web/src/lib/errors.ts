@@ -33,6 +33,12 @@ export function errorText(error: unknown): string {
       return t('Zu viele Versuche auf einmal. Warte kurz und versuch es noch einmal.');
     case 'reauth':
       return t('Bestätige zuerst, dass du es bist.');
+    case 'use_passkey':
+      return t('Bestätige mit deinem Passkey – ein Passwort allein reicht hier nicht.');
+    case 'second_factor_kept':
+      return t(
+        'Setz hier ein neues Passwort. Dein Passkey oder deine Authenticator-App bleibt und wird danach abgefragt.',
+      );
     case 'cancelled':
       return t('Abgebrochen.');
     case 'link_gone':

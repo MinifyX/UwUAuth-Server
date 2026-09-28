@@ -63,6 +63,9 @@ function ReauthDialog() {
   };
 
   const passkeys = (me?.passkeys.length ?? 0) > 0 && available();
+  // Whoever has a passkey and no authenticator app confirms with the passkey: a password alone
+  // is less than what they sign in with.
+  const offerPassword = me?.hasPassword && !(passkeys && !me.hasTotp);
   return (
     <Modal
       title={t('Bestätige, dass du es bist')}
@@ -73,12 +76,12 @@ function ReauthDialog() {
           <button type="button" data-secondary onClick={cancelled} disabled={busy}>
             {t('Abbrechen')}
           </button>
-          {me?.hasPassword && (
+          {offerPassword && (
             <button
               type="submit"
               form="reauth-password"
               className={passkeys ? undefined : 'primary'}
-              disabled={busy || !password || (me.hasTotp && code.replace(/\s/g, '').length < 6)}
+              disabled={busy || !password || (me?.hasTotp && code.replace(/\s/g, '').length < 6)}
             >
               {t('Bestätigen')}
             </button>
@@ -103,7 +106,7 @@ function ReauthDialog() {
           {t('Mit Passkey bestätigen')}
         </button>
       )}
-      {me?.hasPassword && (
+      {offerPassword && me && (
         <form id="reauth-password" className="form" onSubmit={withPassword}>
           {passkeys && <p className="or-line">{t('oder mit deinem Passwort')}</p>}
           <label className="field">

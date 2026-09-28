@@ -14,10 +14,15 @@ import { suggestUsername } from '../lib/names';
 import { useRoute } from '../lib/route';
 import type { LinkInfo } from '../lib/types';
 import { available, createPasskey, deviceName } from '../lib/webauthn';
-import { afterSignIn } from './SignIn';
+import { afterSignIn, SecondStep } from './SignIn';
 
 type Purpose = LinkInfo['purpose'];
 type Json = Record<string, unknown>;
+
+type SetUpAnswer =
+  | { status: 'signed_in'; restricted: boolean }
+  | { status: 'second_factor'; pending: string; methods: ('totp' | 'passkey' | 'recovery')[] }
+  | null;
 
 /**
  * Where the links from mails and QR codes lead: an invitation, setting up an account somebody
@@ -383,22 +388,41 @@ function SetUp({
   const [remember, setRemember] = useState(purpose === 'setup');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [second, setSecond] = useState<Extract<SetUpAnswer, { status: 'second_factor' }> | null>(
+    null,
+  );
 
   const run = async (work: () => Promise<Json>) => {
     setBusy(true);
     setError(null);
     try {
       const body = await work();
-      await api(`/uwu/v1/links/${purpose}/${seg(token)}`, {
+      const answer = await api<SetUpAnswer>(`/uwu/v1/links/${purpose}/${seg(token)}`, {
         body: { ...body, remember },
         anonymous: true,
       });
+      // Somebody with a passkey or the authenticator app confirms with it after a reset.
+      if (answer?.status === 'second_factor') {
+        setSecond(answer);
+        setBusy(false);
+        return;
+      }
       await signedIn(route.query);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
     }
   };
+
+  if (second) {
+    return (
+      <SecondStep
+        pending={second.pending}
+        methods={second.methods}
+        onBack={() => setSecond(null)}
+      />
+    );
+  }
 
   let title: string;
   let lead: ReactNode;
