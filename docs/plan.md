@@ -5,8 +5,8 @@ einer Stelle, und jede App meldet sich darüber an — per OpenID Connect, LDAP,
 hinter einem Reverse-Proxy. Gedacht für die Familie zuhause und das kleine Büro, gebaut so, dass
 später auch eine Firma damit auskommt.
 
-Stand: September 2026. Stufe 0 (das Gerüst) ist fertig und wird 0.0.1. Als Nächstes kommt
-Stufe 1, die Benutzerverwaltung.
+Stand: September 2026. Stufe 0 (das Gerüst, 0.0.1) und Stufe 1 (die Benutzerverwaltung) sind
+fertig. Als Nächstes kommen Stufe 2 (OpenID Connect) und Stufe 3 (LDAP), gemeinsam als 0.3.
 
 ## Leitlinien
 
@@ -121,73 +121,74 @@ Release ein Security-Review (Critical/High/Medium beheben, Low aufschreiben).
 - [x] Web-App als Platzhalter, eingebettet, mit strenger CSP und ohne Einbettung in fremde Seiten
 - [x] Plan, README, Nyu als Ausweis
 
-### Stufe 1 — Benutzerverwaltung (0.1)
+### Stufe 1 — Benutzerverwaltung (0.1, fertig)
 
 Das Herz. Noch kein Protokoll nach außen, aber alles, was die späteren Protokolle brauchen.
 
 **Personen und Gruppen**
 
-- [ ] Personen anlegen, ändern, sperren, entsperren, löschen (erst 30 Tage im Papierkorb)
-- [ ] Gruppen, verschachtelt, mit Besitzern; „Admins“ und „Alle“ von Anfang an
-- [ ] Eigene Attribute pro Person (Text, Zahl, Datum, Auswahl); optionale POSIX-Werte, fortlaufend
+- [x] Personen anlegen, ändern, sperren, entsperren, löschen (erst 30 Tage im Papierkorb)
+- [x] Gruppen, verschachtelt, mit Besitzern; „Admins“ und „Alle“ von Anfang an
+- [x] Eigene Attribute pro Person (Text, Zahl, Datum, Auswahl); optionale POSIX-Werte, fortlaufend
       vergeben
-- [ ] Profilbilder (klein gerechnet, im Container gespeichert)
-- [ ] Import und Export als CSV und JSON
+- [x] Profilbilder (klein gerechnet, im Container gespeichert)
+- [x] Import und Export als CSV und JSON
 
 **Einladung und Einrichtung**
 
-- [ ] Ersteinrichtung: `install.sh --admin` bzw. `uwuauth-server invite --admin` gibt den Link aus,
+- [x] Ersteinrichtung: `install.sh --admin` bzw. `uwuauth-server invite --admin` gibt den Link aus,
       dann ein kurzer Assistent: Name des Haushalts oder der Firma, Sprache, Mail
-- [ ] Wahl beim Einrichten: *Familie* oder *Büro* — ändert nur Wörter und Voreinstellungen
+- [x] Wahl beim Einrichten: *Familie* oder *Büro* — ändert nur Wörter und Voreinstellungen
       (z. B. „Eltern/Kinder“ statt „Verwalter/verwaltete Konten“), nicht die Funktionen
-- [ ] Einladung per Link und **QR-Code**: einmal nutzbar, 7 Tage gültig, Gruppen und Rolle
+- [x] Einladung per Link und **QR-Code**: einmal nutzbar, 7 Tage gültig, Gruppen und Rolle
       vorausgewählt, per Mail, wenn ein Mailserver eingerichtet ist
-- [ ] Beim Annehmen direkt einen Passkey anlegen (Passwort nur, wenn gewünscht)
-- [ ] Registrierung nur per Einladung; offene Registrierung oder Registrierung per Domain erst,
+- [x] Beim Annehmen direkt einen Passkey anlegen (Passwort nur, wenn gewünscht)
+- [x] Registrierung nur per Einladung; offene Registrierung oder Registrierung per Domain erst,
       wenn jemand danach fragt
 
 **Anmeldung**
 
-- [ ] Passkeys (WebAuthn, Discoverable Credentials, Passkey-Autofill im Anmeldefeld)
-- [ ] Passwort mit Argon2id; Regeln nach NIST SP 800-63B (Länge statt Sonderzeichen-Zwang);
+- [x] Passkeys (WebAuthn, Discoverable Credentials, Passkey-Autofill im Anmeldefeld)
+- [x] Passwort mit Argon2id; Regeln nach NIST SP 800-63B (Länge statt Sonderzeichen-Zwang);
       optional die Prüfung gegen Have I Been Pwned per k-Anonymität über den Server, sodass der
       Browser nie mit Dritten spricht
-- [ ] TOTP und Wiederherstellungscodes; zweiter Faktor als Pflicht pro Gruppe
-- [ ] Sitzungen und Geräte: Liste, einzeln abmelden, überall abmelden
-- [ ] Passwort vergessen per Mail; bei verwalteten Konten Zurücksetzen durch den Verwalter
-- [ ] Rate-Limits pro Adresse und pro Konto, sanfte Sperre nach Fehlversuchen, Hinweis per Mail
+- [x] TOTP und Wiederherstellungscodes; zweiter Faktor als Pflicht pro Gruppe
+- [x] Sitzungen und Geräte: Liste, einzeln abmelden, überall abmelden
+- [x] Passwort vergessen per Mail; bei verwalteten Konten Zurücksetzen durch den Verwalter
+- [x] Rate-Limits pro Adresse und pro Konto, sanfte Sperre nach Fehlversuchen, Hinweis per Mail
       bei Anmeldung von einem neuen Gerät (abschaltbar)
-- [ ] App-Passwörter anlegen und widerrufen (genutzt ab Stufe 3)
+- [x] App-Passwörter anlegen und widerrufen (genutzt ab Stufe 3)
 
 **Self-Service-Portal** (für jeden)
 
-- [ ] Profil, Profilbild, Sprache, E-Mail-Adresse ändern (mit Bestätigung)
-- [ ] Passkeys, Passwort, TOTP, Wiederherstellungscodes, App-Passwörter
-- [ ] Eigene Sitzungen und eigener Anmeldeverlauf
-- [ ] Eigene Gruppen; „Meine Apps“ als Kacheln (leer, bis Stufe 2 Apps bringt)
+- [x] Profil, Profilbild, Sprache, E-Mail-Adresse ändern (mit Bestätigung)
+- [x] Passkeys, Passwort, TOTP, Wiederherstellungscodes, App-Passwörter
+- [x] Eigene Sitzungen und eigener Anmeldeverlauf
+- [x] Eigene Gruppen; „Meine Apps“ als Kacheln kommt mit den Apps in Stufe 2
 
 **Verwaltete Konten (Kinder)**
 
-- [ ] Rolle *Verwalter* für bestimmte Personen oder Gruppen (Eltern → Kinder, Teamleitung → Team)
-- [ ] Konto ohne E-Mail, nur mit Benutzername; Passkey-Einrichtung per QR-Code auf dem Gerät des
+- [x] Rolle *Verwalter* für bestimmte Personen oder Gruppen (Eltern → Kinder, Teamleitung → Team)
+- [x] Konto ohne E-Mail, nur mit Benutzername; Passkey-Einrichtung per QR-Code auf dem Gerät des
       Kindes, vom Verwalter ausgelöst
-- [ ] Verwalter setzen Passwörter zurück, sperren und entsperren, sehen Anmeldungen ihrer Personen
-- [ ] Regeln für App-Zugriff und Zeitfenster pro Person oder Gruppe hinterlegen („Schul-Tablet
+- [x] Verwalter setzen Passwörter zurück, sperren und entsperren, sehen Anmeldungen ihrer Personen
+- [x] Regeln für App-Zugriff und Zeitfenster pro Person oder Gruppe hinterlegen („Schul-Tablet
       nur 7–20 Uhr“). Wirksam, sobald Apps sich über UwUAuth anmelden (Stufe 2, 5 und 8)
 
 **Admin-Portal** unter `/admin`
 
-- [ ] Personen, Gruppen, Einladungen, Rollen
-- [ ] Einstellungen: Mail (mit Testmail), Sprache, Passwortregeln, Sitzungsdauer, Registrierung
-- [ ] Ereignisprotokoll, Server-Log, Backups (anlegen, herunterladen), Update-Hinweis
-- [ ] Admin-API mit API-Tokens für Skripte, beschrieben als OpenAPI
+- [x] Personen, Gruppen, Einladungen, Rollen
+- [x] Einstellungen: Mail (mit Testmail), Sprache, Passwortregeln, Sitzungsdauer, Registrierung
+- [x] Ereignisprotokoll, Server-Log, Backups (anlegen, herunterladen), Update-Hinweis
+- [x] Admin-API mit API-Tokens für Skripte, beschrieben in `docs/api.md` (OpenAPI folgt, wenn
+      jemand einen Client daraus bauen will)
 
 **Werkzeuge**
 
-- [ ] `uwuauth-mail`: SMTP (STARTTLS/TLS), Vorlagen auf Deutsch und Englisch
-- [ ] Befehle: `invite`, `admin`, `reset-password`, `reset-2fa`, damit man auch ohne
+- [x] `uwuauth-mail`: SMTP (STARTTLS/TLS), Vorlagen auf Deutsch und Englisch
+- [x] Befehle: `invite`, `admin`, `reset-password`, `reset-two-factor`, damit man auch ohne
       funktionierenden Admin wieder hineinkommt
-- [ ] Browser-Test in CI (Playwright): einladen, Passkey anlegen (virtueller Authenticator),
+- [x] Browser-Test in CI (Playwright): einladen, Passkey anlegen (virtueller Authenticator),
       anmelden, Kind verwalten
 
 ### Stufe 2 — OpenID Connect und OAuth 2 (0.2)

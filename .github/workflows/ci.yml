@@ -215,6 +215,50 @@ jobs:
           path: dist
           retention-days: 3
 
+  e2e:
+    name: Browser
+    needs: binaries
+    runs-on: ubuntu-latest
+    # Chromium and everything it needs, the same version as scripts/interop uses.
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: binaries
+          path: dist
+      - name: Invite, set up, sign in, every page
+        env:
+          UWUAUTH_DATA: /tmp/uwuauth
+          UWUAUTH_LISTEN: 127.0.0.1:18743
+          # localhost: browsers allow passkeys there without TLS.
+          UWUAUTH_PUBLIC: http://localhost:18743
+          UWUAUTH_TLS: "off"
+          UWUAUTH_UPDATE_CHECK: "off"
+        run: |
+          (cd /tmp && npm install --no-save --silent --no-audit --no-fund playwright@1.63.0)
+          chmod +x dist/amd64/uwuauth-server
+          mkdir -p "$UWUAUTH_DATA"
+          dist/amd64/uwuauth-server > server.log 2>&1 &
+          for _ in $(seq 1 100); do
+            node -e "fetch('http://127.0.0.1:18743/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))" && break
+            sleep 0.1
+          done
+          link=$(dist/amd64/uwuauth-server invite --admin admin@example.com | grep -o 'http://localhost:18743/#/invite?token=[A-Za-z0-9_-]*' | head -n 1)
+          test -n "$link"
+          PLAYWRIGHT=/tmp/node_modules/playwright/index.mjs node scripts/e2e/web.mjs "$link" http://localhost:18743 shots
+      - name: What the browser saw
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-shots
+          path: |
+            shots
+            server.log
+          retention-days: 7
+
   install:
     name: Install and update
     needs: binaries
@@ -244,13 +288,15 @@ jobs:
           sudo chown root:root /opt
           sudo chmod 755 /opt
           sudo bash install.sh --yes --no-pull --from-checkout --version 0.0.1 \
-            --behind-proxy https://auth.example.com | tee install.log
+            --behind-proxy https://auth.example.com --admin admin@example.com | tee install.log
           test "$(sudo stat -c %a /opt/uwuauth/.env)" = 600
           sudo grep -qx 'UWUAUTH_PUBLIC=https://auth.example.com' /opt/uwuauth/.env
           sudo grep -qx 'UWUAUTH_TLS=off' /opt/uwuauth/.env
           sudo grep -qx 'UWUAUTH_BIND=127.0.0.1:8443' /opt/uwuauth/.env
           sudo grep -qx 'UWUAUTH_TRUST_FORWARDED=on' /opt/uwuauth/.env
           grep -q 'Address       https://auth.example.com' install.log
+          # The first admin's invitation, as a link to make the account with.
+          grep -q 'https://auth.example.com/#/invite?token=' install.log
           curl -sf http://127.0.0.1:8443/healthz | jq -e '.ok == true'
           curl -sf http://127.0.0.1:8443/alive
           # Only on loopback, where nothing but the proxy reaches it.
@@ -333,7 +379,7 @@ jobs:
   image:
     name: Container image
     if: github.event_name != 'pull_request'
-    needs: [test, acme, scripts, audit, web, install, version]
+    needs: [test, acme, scripts, audit, web, install, e2e, version]
     runs-on: ubuntu-latest
     permissions:
       contents: read

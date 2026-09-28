@@ -24,6 +24,8 @@
 #                          reaches it at http://uwuauth:8443
 #   --proxy-ip ADDRESS     a fixed IPv4 address for the server in NET, needed in ipvlan and
 #                          macvlan networks; the proxy then reaches it at http://ADDRESS:8443
+#   --admin ADDRESS        invite ADDRESS as the first admin: the link to make the account with is
+#                          shown at the end (and mailed, once the server can send mail)
 #   --bind X               where it listens here: a port, or address:port (default 443 with
 #                          --domain, 127.0.0.1:8443 behind a proxy)
 #   --version TAG          latest (default), beta, edge, or an exact version like 0.0.1
@@ -49,6 +51,7 @@ acme_directory=letsencrypt
 proxy=""
 proxy_network=""
 proxy_ip=""
+admin=""
 bind=""
 version=latest
 update_check=on
@@ -73,6 +76,7 @@ while [ $# -gt 0 ]; do
     --behind-proxy) proxy="${2:?--behind-proxy needs the address the proxy answers on}"; shift 2 ;;
     --proxy-network) proxy_network="${2:?--proxy-network needs the name of a Docker network}"; shift 2 ;;
     --proxy-ip) proxy_ip="${2:?--proxy-ip needs an address}"; shift 2 ;;
+    --admin) admin="${2:?--admin needs an e-mail address}"; shift 2 ;;
     --bind) bind="${2:?--bind needs a port}"; shift 2 ;;
     --version) version="${2:?--version needs a tag}"; shift 2 ;;
     --no-update-check) update_check=off; shift ;;
@@ -288,6 +292,9 @@ if [ -n "$proxy_ip" ]; then
   valid_ipv4 "$proxy_ip" || die "--proxy-ip wants an IPv4 address like 192.0.2.10, not $proxy_ip"
 fi
 valid_email() { [[ "$1" =~ ^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; }
+if [ -n "$admin" ]; then
+  valid_email "$admin" || die "--admin wants an address like you@example.com, not $admin"
+fi
 
 # What is in the directory runs as root: Compose starts whatever compose.yaml and .env say. So it
 # has to belong to root, or to the admin who ran sudo, and nobody else may write to it — nor to a
@@ -488,6 +495,15 @@ NETWORK
   fi
 fi
 
+# Nobody makes an account without an invitation, so the first one goes to whoever runs the server.
+if [ -z "$admin" ] && $ask && have_tty; then
+  printf '\n'
+  admin=$(askfor "Your e-mail address, to invite you as the first admin (Enter to do it later)")
+  if [ -n "$admin" ]; then
+    valid_email "$admin" || die "that is not an e-mail address: $admin"
+  fi
+fi
+
 if [ -n "$proxy_network" ]; then
   network_driver=$(docker network inspect --format '{{.Driver}}' "$proxy_network" </dev/null 2>/dev/null) ||
     die "there is no Docker network $proxy_network here. docker network ls lists them"
@@ -672,12 +688,37 @@ cat <<DONE
 
   Address       $public
 
-  This is 0.0.x, the frame: people, groups and signing in come with 0.1.
-  What is planned: https://github.com/$repo/blob/main/docs/plan.md
+  Admin portal  $public/admin
 
   Next version:   cd $dir && sudo bash update.sh
 
 DONE
+
+# The first admin's invitation: the link comes from the server itself, which also mails it once it
+# can send mail. Without a mail server the link here is the only way in, so it is shown either way.
+invite_hint="cd $dir && sudo docker compose exec $service uwuauth-server invite --admin you@example.com"
+if [ -n "$admin" ]; then
+  if invitation=$(docker compose exec -T "$service" uwuauth-server invite --admin "$admin" </dev/null 2>/dev/null); then
+    link=$(printf '%s\n' "$invitation" | grep -E '^https?://' | tail -1)
+    cat <<ADMIN
+  Your invitation as the first admin, $admin — open it to make your account:
+
+    $link
+
+  It works for 7 days. A new one:  $invite_hint
+
+ADMIN
+  else
+    warn "the invitation for $admin did not work. Make one yourself: $invite_hint"
+  fi
+else
+  cat <<LATER
+  Nobody can make an account without an invitation. Invite yourself as the first admin:
+
+    $invite_hint
+
+LATER
+fi
 
 if [ -n "$proxy" ]; then
   cat <<PROXY
