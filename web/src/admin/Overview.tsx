@@ -181,7 +181,7 @@ function Stat({
   );
 }
 
-function Fact({ label, value, alarm }: { label: string; value: string; alarm?: boolean }) {
+export function Fact({ label, value, alarm }: { label: string; value: string; alarm?: boolean }) {
   return (
     <div className="fact" data-alarm={alarm || undefined}>
       <span className="fact-label">{label}</span>

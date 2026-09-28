@@ -18,6 +18,7 @@ import { Backups } from './Backups';
 import { Events } from './Events';
 import { Groups } from './Groups';
 import { Invitations } from './Invitations';
+import { Ldap } from './Ldap';
 import { Logs } from './Logs';
 import { Overview } from './Overview';
 import { AdminSettings } from './Settings';
@@ -32,6 +33,7 @@ const PAGES: NavItem[] = [
   { path: '/invitations', label: N_('Einladungen'), icon: 'sparkles' },
   { path: '/apps', label: N_('Apps'), icon: 'grid' },
   { path: '/attributes', label: N_('Zusätzliche Felder'), icon: 'tag' },
+  { path: '/ldap', label: N_('LDAP'), icon: 'network' },
   { path: '/settings', label: N_('Einstellungen'), icon: 'building' },
   { path: '/events', label: N_('Ereignisse'), icon: 'history' },
   { path: '/logs', label: N_('Log'), icon: 'terminal' },
@@ -143,6 +145,7 @@ function AdminPages({ me }: { me: Me }) {
       {page.path === '/invitations' && <Invitations me={me} />}
       {page.path === '/apps' && <Apps id={sub || null} />}
       {page.path === '/attributes' && <Attributes />}
+      {page.path === '/ldap' && <Ldap />}
       {page.path === '/settings' && <AdminSettings me={me} />}
       {page.path === '/events' && <Events />}
       {page.path === '/logs' && <Logs />}

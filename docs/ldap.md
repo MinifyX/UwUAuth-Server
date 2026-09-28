@@ -91,6 +91,7 @@ person counts against the same limits as signing in on the web, and goes into th
 | `givenName`, `sn` | first and last name (`sn` falls back to the display name) |
 | `mail` | the address |
 | `userPrincipalName` | `name@example.com` |
+| `distinguishedName` | the entry's DN, as Active Directory has it |
 | `uidNumber`, `gidNumber`, `homeDirectory`, `loginShell` | for Linux (`gidNumber` is `everyone`'s) |
 | `memberOf` | the groups they are in directly, and `everyone` |
 | `objectGUID`, `objectSid` | the id, the way Windows writes it; the SID is `S-1-5-21-…-<uidNumber>` |

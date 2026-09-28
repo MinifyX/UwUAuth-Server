@@ -1198,3 +1198,22 @@ button.stat:hover:not(:disabled) {
     display: none;
   }
 }
+
+/* ── LDAP ──────────────────────────────────────────────── */
+
+.code-block {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--uwu-radius-control);
+  background: var(--uwu-canvas);
+  border: 1px solid var(--uwu-border);
+  font-size: 13px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.facts + .section-lead {
+  margin-top: 10px;
+}

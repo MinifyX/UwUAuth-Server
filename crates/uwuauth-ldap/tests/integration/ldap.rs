@@ -259,6 +259,7 @@ async fn an_app_finds_people_the_active_directory_way() {
     let nyu_entry = &found[0];
     assert_eq!(nyu_entry.dn, "uid=nyu,ou=people,dc=example,dc=com");
     assert_eq!(values(nyu_entry, "userPrincipalName"), ["nyu@example.com"]);
+    assert_eq!(values(nyu_entry, "distinguishedName"), ["uid=nyu,ou=people,dc=example,dc=com"]);
     assert_eq!(values(nyu_entry, "cn"), ["Nyu Neko"]);
     assert!(values(nyu_entry, "memberOf").contains(&"cn=admins,ou=groups,dc=example,dc=com".to_string()));
     assert!(

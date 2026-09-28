@@ -219,6 +219,7 @@ impl Snapshot {
             entry.one("loginShell", person.login_shell.clone().unwrap_or_else(|| "/bin/bash".into()));
             entry.one("preferredLanguage", &person.language);
             entry.one("sAMAccountName", &person.username);
+            entry.one("distinguishedName", entry.dn.clone());
             entry.one("userPrincipalName", format!("{}@{}", person.username, source.domain));
             entry.set("objectGUID", vec![object_guid(&person.id)]);
             entry.set("objectSid", vec![object_sid(source.sid, person.uid_number as u32)]);
@@ -259,6 +260,7 @@ impl Snapshot {
             entry.text("objectClass", &["top", "groupOfNames", "groupOfUniqueNames", "posixGroup", "group"]);
             entry.one("cn", &group.name);
             entry.one("sAMAccountName", &group.name);
+            entry.one("distinguishedName", entry.dn.clone());
             if !group.description.is_empty() {
                 entry.one("description", &group.description);
             }

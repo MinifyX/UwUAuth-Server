@@ -51,6 +51,10 @@ fn main() {
         // Only watched when it exists: a missing path would run this script again on every build.
         println!("cargo:rerun-if-changed={}", dist.display());
         collect(&dist, &mut files);
+    } else if let Some(parent) = dist.parent().filter(|parent| parent.is_dir()) {
+        // Without it, the folder it will appear in: a `pnpm build` afterwards changes that, and
+        // the next build embeds the web app instead of going on without it.
+        println!("cargo:rerun-if-changed={}", parent.display());
     }
     let mut entries: Vec<(String, PathBuf)> = files
         .into_iter()

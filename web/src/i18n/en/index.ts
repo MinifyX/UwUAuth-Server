@@ -5,6 +5,7 @@
 
 import admin from './admin.json';
 import app from './app.json';
+import ldap from './ldap.json';
 import oidc from './oidc.json';
 import portal from './portal.json';
 import signin from './signin.json';
@@ -15,4 +16,5 @@ export const EN: Readonly<Record<string, string>> = {
   ...portal,
   ...admin,
   ...oidc,
+  ...ldap,
 };

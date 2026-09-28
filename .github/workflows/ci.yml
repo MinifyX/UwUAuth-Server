@@ -237,6 +237,9 @@ jobs:
           UWUAUTH_PUBLIC: http://localhost:18743
           UWUAUTH_TLS: "off"
           UWUAUTH_UPDATE_CHECK: "off"
+          # LDAP on, so its page in the admin portal has something to show.
+          UWUAUTH_LDAP_LISTEN: 127.0.0.1:10389
+          UWUAUTH_LDAP_PLAIN_BIND: "on"
         run: |
           (cd /tmp && npm install --no-save --silent --no-audit --no-fund playwright@1.63.0)
           chmod +x dist/amd64/uwuauth-server
