@@ -65,7 +65,7 @@ impl Store {
 
     /// Replace every definition with these. Values of attributes that are gone go with them.
     pub async fn set_attribute_defs(&self, defs: Vec<AttributeDef>) -> Result<()> {
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             let names: Vec<&str> = defs.iter().map(|def| def.name.as_str()).collect();
             let existing: Vec<String> = {
                 let mut statement = tx.prepare("SELECT name FROM attribute_defs")?;
@@ -122,7 +122,7 @@ impl Store {
     /// Set these attributes of `person`; an empty value removes one.
     pub async fn set_attributes(&self, person: &str, values: BTreeMap<String, String>) -> Result<()> {
         let person = person.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             for (name, value) in values {
                 if value.is_empty() {
                     tx.execute("DELETE FROM attribute_values WHERE person_id = ?1 AND name = ?2", [&person, &name])?;

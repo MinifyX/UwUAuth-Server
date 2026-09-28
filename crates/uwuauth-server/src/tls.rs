@@ -28,6 +28,16 @@ fn alpn() -> Vec<Vec<u8>> {
     vec![b"h2".to_vec(), b"http/1.1".to_vec()]
 }
 
+/// The same certificate for LDAP, but nothing else shared with HTTPS: no ALPN (a client asking
+/// for `h2` has no business on the LDAP port) and sessions of its own, so a TLS session from one
+/// cannot be resumed on the other.
+fn for_ldap(config: &Arc<ServerConfig>) -> Arc<ServerConfig> {
+    let mut ldap = ServerConfig::clone(config);
+    ldap.alpn_protocols = Vec::new();
+    ldap.session_storage = rustls::server::ServerSessionMemoryCache::new(256);
+    Arc::new(ldap)
+}
+
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(ring::default_provider())
 }
@@ -55,14 +65,14 @@ pub fn prepare(config: &Config) -> Result<Prepared, String> {
     let http = match &config.tls {
         TlsMode::Off => {
             if let Some((cert, key)) = &config.ldap_cert {
-                *ldap.write() = Some(from_files(cert, key)?);
+                *ldap.write() = Some(for_ldap(&from_files(cert, key)?));
                 watch_files(None, ldap.clone(), cert.clone(), key.clone());
             }
             Http::Off
         }
         TlsMode::Files { cert, key } => {
             let loaded = from_files(cert, key)?;
-            *ldap.write() = Some(loaded.clone());
+            *ldap.write() = Some(for_ldap(&loaded));
             let tls = RustlsConfig::from_config(loaded);
             watch_files(Some(tls.clone()), ldap.clone(), cert.clone(), key.clone());
             Http::Files(tls)
@@ -261,7 +271,7 @@ fn watch_files(tls: Option<RustlsConfig>, ldap: Slot, cert: PathBuf, key: PathBu
                     if let Some(tls) = &tls {
                         tls.reload_from_config(config.clone());
                     }
-                    *ldap.write() = Some(config);
+                    *ldap.write() = Some(for_ldap(&config));
                     seen = now;
                     tracing::info!(cert = %cert.display(), "certificate changed on disk; using the new one");
                 }
@@ -292,7 +302,7 @@ fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<(rustls_acme::axum::AxumAc
         .with_cert_resolver(state.resolver());
     tls.alpn_protocols = alpn();
     // LDAP shows the same certificate, from the same resolver, which knows when it was renewed.
-    let for_ldap = ServerConfig::builder_with_provider(provider())
+    let ldap = ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(|error| error.to_string())?
         .with_no_client_auth()
@@ -312,7 +322,7 @@ fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<(rustls_acme::axum::AxumAc
             }
         }
     });
-    Ok((acceptor, Arc::new(for_ldap)))
+    Ok((acceptor, Arc::new(ldap)))
 }
 
 /// A client configuration that trusts the usual roots and one more CA from a PEM file.

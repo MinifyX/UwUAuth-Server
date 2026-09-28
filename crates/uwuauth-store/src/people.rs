@@ -120,7 +120,7 @@ impl Store {
     pub async fn create_person(&self, new: NewPerson) -> Result<Person> {
         let id = new.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let now = clock::now();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             let uid: i64 =
                 tx.query_row("SELECT max(coalesce(max(uid_number) + 1, ?1), ?1) FROM people", [FIRST_UID], |row| {
                     row.get(0)
@@ -183,7 +183,7 @@ impl Store {
     /// only when `change` sets a new one.
     pub async fn update_person(&self, id: &str, change: impl FnOnce(&mut Person) + Send + 'static) -> Result<Person> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             let mut person =
                 tx.query_row(&format!("SELECT {COLUMNS} FROM people WHERE id = ?1"), [&id], person_from)?;
             change(&mut person);
@@ -248,7 +248,7 @@ impl Store {
     /// Gone for good, with everything that hangs on them.
     pub async fn purge_person(&self, id: &str) -> Result<bool> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| tx.execute("DELETE FROM people WHERE id = ?1", [id]).map(|n| n == 1)).await
+        self.directory_write(move |tx| tx.execute("DELETE FROM people WHERE id = ?1", [id]).map(|n| n == 1)).await
     }
 
     pub async fn avatar(&self, id: &str) -> Result<Option<(Vec<u8>, String)>> {
@@ -273,7 +273,7 @@ impl Store {
 
     pub async fn set_avatar(&self, id: &str, jpeg: Option<Vec<u8>>) -> Result<()> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| match jpeg {
+        self.directory_write(move |tx| match jpeg {
             Some(jpeg) => tx
                 .execute(
                     "INSERT INTO avatars (person_id, jpeg, updated) VALUES (?1, ?2, ?3) \

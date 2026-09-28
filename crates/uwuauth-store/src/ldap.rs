@@ -48,7 +48,7 @@ impl Store {
         let id = uuid::Uuid::new_v4().to_string();
         let (name, description, created_by) =
             (name.to_string(), description.to_string(), created_by.map(str::to_string));
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute(
                 "INSERT INTO ldap_accounts (id, name, description, hash, created_by, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![id, name, description, hash, created_by, clock::now()],
@@ -88,7 +88,8 @@ impl Store {
 
     pub async fn delete_ldap_account(&self, id: &str) -> Result<bool> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| tx.execute("DELETE FROM ldap_accounts WHERE id = ?1", [id]).map(|n| n == 1)).await
+        self.directory_write(move |tx| tx.execute("DELETE FROM ldap_accounts WHERE id = ?1", [id]).map(|n| n == 1))
+            .await
     }
 }
 

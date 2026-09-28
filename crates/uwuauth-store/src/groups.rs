@@ -190,7 +190,7 @@ impl Store {
 
     pub async fn create_group(&self, fields: GroupFields) -> Result<Group> {
         let id = uuid::Uuid::new_v4().to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             let gid: i64 = tx.query_row("SELECT max(gid_number) + 1 FROM groups", [], |row| row.get(0))?;
             let now = clock::now();
             tx.execute(
@@ -214,7 +214,7 @@ impl Store {
 
     pub async fn update_group(&self, id: &str, fields: GroupFields) -> Result<Option<Group>> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute(
                 "UPDATE groups SET name = ?2, description = ?3, require_mfa = ?4, ldap_app_passwords_only = ?5, \
                  updated = ?6 WHERE id = ?1",
@@ -236,7 +236,7 @@ impl Store {
     /// Delete a group that is not one of the two built in. False when there was none to delete.
     pub async fn delete_group(&self, id: &str) -> Result<bool> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("DELETE FROM schedules WHERE subject_kind = 'group' AND subject_id = ?1", [&id])?;
             tx.execute("DELETE FROM groups WHERE id = ?1 AND builtin IS NULL", [&id]).map(|n| n == 1)
         })
@@ -268,7 +268,7 @@ impl Store {
     /// [`StoreError::Loop`] when a group would end up inside itself.
     pub async fn set_members(&self, group: &str, members: Members) -> Result<()> {
         let group = group.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             let mut membership = load_membership(tx)?;
             membership.groups.insert(group.clone(), members.groups.iter().cloned().collect());
             if members.groups.iter().any(|inner| inner == EVERYONE_ID || membership.would_loop(&group, inner)) {
@@ -286,7 +286,7 @@ impl Store {
     /// Add `person` to `group`; nothing when they are in it already.
     pub async fn add_member(&self, group: &str, person: &str) -> Result<()> {
         let (group, person) = (group.to_string(), person.to_string());
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("INSERT OR IGNORE INTO memberships (group_id, person_id) VALUES (?1, ?2)", [group, person])
                 .map(drop)
         })
@@ -295,7 +295,7 @@ impl Store {
 
     pub async fn remove_member(&self, group: &str, person: &str) -> Result<()> {
         let (group, person) = (group.to_string(), person.to_string());
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("DELETE FROM memberships WHERE group_id = ?1 AND person_id = ?2", [group, person]).map(drop)
         })
         .await
@@ -304,7 +304,7 @@ impl Store {
     /// Put `person` into exactly these groups (directly), leaving groups inside groups alone.
     pub async fn set_groups_of(&self, person: &str, groups: Vec<String>) -> Result<()> {
         let person = person.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("DELETE FROM memberships WHERE person_id = ?1", [&person])?;
             for group in groups.iter().filter(|group| group.as_str() != EVERYONE_ID) {
                 tx.execute(

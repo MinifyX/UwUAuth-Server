@@ -12,6 +12,28 @@
 use crate::directory::{Entry, Snapshot};
 use crate::dn::Dn;
 use ldap3_proto::proto::{LdapFilter, LdapSubstringFilter};
+use std::collections::{BTreeSet, HashMap};
+
+/// What one search worked out about groups inside groups, by entry, so a filter with the in-chain
+/// rule in it works it out once per entry, however often it asks.
+#[derive(Default)]
+pub struct Nested {
+    groups: HashMap<String, BTreeSet<String>>,
+    members: HashMap<String, BTreeSet<String>>,
+}
+
+/// At most this many extensible matches in one filter: each can walk every group.
+pub const MOST_EXTENSIBLE: usize = 32;
+
+/// How many extensible matches `filter` holds.
+pub fn extensible_count(filter: &LdapFilter) -> usize {
+    match filter {
+        LdapFilter::And(all) | LdapFilter::Or(all) => all.iter().map(extensible_count).sum(),
+        LdapFilter::Not(inner) => extensible_count(inner),
+        LdapFilter::Extensible(_) => 1,
+        _ => 0,
+    }
+}
 
 pub const IN_CHAIN: &str = "1.2.840.113556.1.4.1941";
 pub const BIT_AND: &str = "1.2.840.113556.1.4.803";
@@ -65,12 +87,12 @@ fn compare(stored: &[u8], asked: &str) -> Option<std::cmp::Ordering> {
 }
 
 /// Whether `entry` matches `filter`.
-pub fn matches(filter: &LdapFilter, entry: &Entry, snapshot: &Snapshot) -> bool {
+pub fn matches(filter: &LdapFilter, entry: &Entry, snapshot: &Snapshot, nested: &mut Nested) -> bool {
     let values = |name: &str| entry.get(name).map(Vec::as_slice).unwrap_or_default();
     match filter {
-        LdapFilter::And(all) => all.iter().all(|filter| matches(filter, entry, snapshot)),
-        LdapFilter::Or(any) => any.iter().any(|filter| matches(filter, entry, snapshot)),
-        LdapFilter::Not(inner) => !matches(inner, entry, snapshot),
+        LdapFilter::And(all) => all.iter().all(|filter| matches(filter, entry, snapshot, nested)),
+        LdapFilter::Or(any) => any.iter().any(|filter| matches(filter, entry, snapshot, nested)),
+        LdapFilter::Not(inner) => !matches(inner, entry, snapshot, nested),
         LdapFilter::Equality(name, value) | LdapFilter::Approx(name, value) => {
             values(name).iter().any(|stored| equal(name, stored, value))
         }
@@ -88,8 +110,16 @@ pub fn matches(filter: &LdapFilter, entry: &Entry, snapshot: &Snapshot) -> bool 
                 Some(IN_CHAIN) => {
                     let Some(asked) = Dn::parse(&assertion.match_value).map(|dn| dn.normalized()) else { return false };
                     match name.to_lowercase().as_str() {
-                        "memberof" => snapshot.nested_groups_of(entry).contains(&asked),
-                        "member" | "uniquemember" => snapshot.nested_members_of(entry).contains(&asked),
+                        "memberof" => nested
+                            .groups
+                            .entry(entry.normalized.clone())
+                            .or_insert_with(|| snapshot.nested_groups_of(entry))
+                            .contains(&asked),
+                        "member" | "uniquemember" => nested
+                            .members
+                            .entry(entry.normalized.clone())
+                            .or_insert_with(|| snapshot.nested_members_of(entry))
+                            .contains(&asked),
                         _ => values(name).iter().any(|stored| equal(name, stored, &assertion.match_value)),
                     }
                 }

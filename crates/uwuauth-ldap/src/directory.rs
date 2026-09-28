@@ -14,6 +14,7 @@
 //! `posixGroup` *and* `group`.
 
 use crate::dn::{Dn, escape};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use uwuauth_store::{EVERYONE_ID, Group, Membership, Person};
 
@@ -38,17 +39,13 @@ pub struct Entry {
     pub attributes: BTreeMap<String, (String, Vec<Vec<u8>>)>,
 }
 
-/// Attributes only given when asked for by name ("operational", or large).
-pub const ON_REQUEST: &[&str] = &[
-    "entryuuid",
-    "createtimestamp",
-    "modifytimestamp",
-    "entrydn",
-    "subschemasubentry",
-    "hassubordinates",
-    "jpegphoto",
-    "thumbnailphoto",
-];
+/// Attributes only given when asked for by name ("operational").
+pub const ON_REQUEST: &[&str] =
+    &["entryuuid", "createtimestamp", "modifytimestamp", "entrydn", "subschemasubentry", "hassubordinates"];
+
+/// The picture, only when asked for by name: fetched then, for the entries found, and never kept
+/// in the directory in memory.
+pub const PHOTOS: &[&str] = &["jpegphoto", "thumbnailphoto"];
 
 impl Entry {
     fn new(dn: String, kind: Kind) -> Entry {
@@ -87,7 +84,6 @@ pub struct Source<'a> {
     pub groups: &'a [Group],
     pub membership: &'a Membership,
     pub attributes: &'a BTreeMap<String, BTreeMap<String, String>>,
-    pub avatars: &'a BTreeMap<String, Vec<u8>>,
     pub services: &'a [String],
 }
 
@@ -239,10 +235,6 @@ impl Snapshot {
             entry.one("modifyTimestamp", generalized(&person.updated));
             entry.one("whenCreated", generalized(&person.created));
             entry.one("whenChanged", generalized(&person.updated));
-            if let Some(photo) = source.avatars.get(&person.id) {
-                entry.set("jpegPhoto", vec![photo.clone()]);
-                entry.set("thumbnailPhoto", vec![photo.clone()]);
-            }
             if let Some(values) = source.attributes.get(&person.id) {
                 for (name, value) in values {
                     if !entry.attributes.contains_key(&name.to_lowercase()) {
@@ -425,6 +417,88 @@ impl Snapshot {
             });
         }
         by_username(name)
+    }
+}
+
+/// What a connection may read.
+#[derive(Debug, Clone)]
+pub enum Sees {
+    /// An app's LDAP account: the whole directory.
+    All,
+    /// A person: the base and its three containers, their own entry, and the groups they are in
+    /// — of those only the name and number, and of the members only themselves. An app that
+    /// signs a person in by binding as them finds what it needs; a person does not get a list
+    /// of everybody with their addresses.
+    Person {
+        /// Normalized DN of their entry.
+        own: String,
+        /// Their DN as it stands in `member`, and their user name as in `memberUid`.
+        dn: String,
+        username: String,
+        /// Normalized DNs of their groups, through groups inside groups too.
+        groups: BTreeSet<String>,
+    },
+}
+
+/// What a person sees of their groups; everything else of a group stays hidden.
+const GROUP_SEEN: &[&str] = &[
+    "objectclass",
+    "cn",
+    "samaccountname",
+    "description",
+    "gidnumber",
+    "grouptype",
+    "objectguid",
+    "objectsid",
+    "entryuuid",
+];
+
+impl Snapshot {
+    /// What `person` sees; nothing when they are not in the directory.
+    pub fn sees(&self, person: &str) -> Option<Sees> {
+        let entry = &self.entries[*self.people.get(person)?];
+        let groups =
+            self.membership.groups_of(person).iter().filter_map(|id| self.group_dns.get(id).cloned()).collect();
+        let username = entry.get("uid").and_then(|values| values.first()).map(|value| value.to_vec())?;
+        Some(Sees::Person {
+            own: entry.normalized.clone(),
+            dn: entry.dn.clone(),
+            username: String::from_utf8(username).ok()?,
+            groups,
+        })
+    }
+
+    /// `entry` as `sees` may read it, or nothing when it may not read it at all.
+    pub fn view<'a>(&self, entry: &'a Entry, sees: &Sees) -> Option<Cow<'a, Entry>> {
+        let Sees::Person { own, dn, username, groups } = sees else { return Some(Cow::Borrowed(entry)) };
+        match &entry.kind {
+            Kind::Base => Some(Cow::Borrowed(entry)),
+            // The three containers, not the apps' accounts under `ou=services`.
+            Kind::Container if entry.parsed.0.len() == self.base.0.len() + 1 => Some(Cow::Borrowed(entry)),
+            Kind::Person(_) if &entry.normalized == own => Some(Cow::Borrowed(entry)),
+            Kind::Group(_) if groups.contains(&entry.normalized) => {
+                let mut seen = Entry { attributes: BTreeMap::new(), ..entry.clone() };
+                for (lower, value) in &entry.attributes {
+                    if GROUP_SEEN.contains(&lower.as_str()) {
+                        seen.attributes.insert(lower.clone(), value.clone());
+                    }
+                }
+                let own_dn = Dn::parse(dn).map(|dn| dn.normalized());
+                for name in ["member", "uniqueMember"] {
+                    let mine = entry.get(name).into_iter().flatten().any(|value| {
+                        std::str::from_utf8(value).ok().and_then(Dn::parse).map(|dn| dn.normalized()) == own_dn
+                    });
+                    if mine {
+                        seen.set(name, vec![dn.clone().into_bytes()]);
+                    }
+                }
+                if entry.get("memberUid").into_iter().flatten().any(|value| value == username.as_bytes()) {
+                    seen.one("memberUid", username);
+                }
+                Some(Cow::Owned(seen))
+            }
+            _ => None,
+        }
     }
 }
 
