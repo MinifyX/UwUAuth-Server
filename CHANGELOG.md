@@ -21,6 +21,8 @@ groups, time windows and second-factor rules as for OpenID Connect apply. Setup 
   by default. Signing out, ending sessions and password changes take effect at once.
 - Templates for **Synology DSM** and **Technitium DNS**.
 - The interop tests run the whole flow against a real Caddy.
+- Dependencies: rustls 0.23.46, rustls-webpki 0.103.16, webpki-roots 1.0.11 and tokio 1.54.1,
+  for RUSTSEC-2026-0346 to -0349, -0381, -0382, -0383 and -0386.
 
 ## 0.4.0-beta.1
 
