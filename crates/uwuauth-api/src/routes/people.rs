@@ -444,6 +444,7 @@ async fn trash(
         })
         .await?;
     state.store.end_sessions(&person.id, None).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(
         &state,
         "person_deleted",
@@ -514,6 +515,7 @@ async fn disable(
         })
         .await?;
     state.store.end_sessions(&person.id, None).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(&state, "person_disabled", Some(&me.person.id), Some(&person.id), None, &ip, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -623,6 +625,7 @@ async fn set_password(
         })
         .await?;
     state.store.end_sessions(&person.id, None).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(&state, "password_set", Some(&me.person.id), Some(&person.id), None, &ip, json!({})).await;
     notify(&state, &person, Mail::PasswordChanged { time: now_text(&state) });
     Ok(StatusCode::NO_CONTENT)
@@ -667,6 +670,7 @@ async fn end_sessions(
     let (_, person) = target(&state, &me, &id).await?;
     let keep = (person.id == me.person.id).then_some(me.session.id.as_slice());
     let ended = state.store.end_sessions(&person.id, keep).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(&state, "sessions_ended", Some(&me.person.id), Some(&person.id), None, &ip, json!({ "count": ended })).await;
     Ok(Json(json!({ "ended": ended })))
 }

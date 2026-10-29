@@ -4,20 +4,20 @@ import { CopyField, Loading, SecretOnce } from '../components/bits';
 import { Row, Section, Segmented, Toggle, useAction } from '../components/controls';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Picker, type Choice } from '../components/Picker';
+import { Picker } from '../components/Picker';
 import { PageTitle } from '../components/Shell';
 import { UriList } from '../components/UriList';
 import { api, seg } from '../lib/api';
-import { discoveryUrl } from '../lib/apps';
+import { discoveryUrl, FORWARD_AUTH } from '../lib/apps';
 import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { go } from '../lib/route';
 import { toast } from '../lib/toast';
 import type { App, Group } from '../lib/types';
-import { groupName } from '../lib/words';
 import { Confirm } from '../portal/Security';
 import { AppBadges } from './Apps';
 import { type RoleMapping, RolesEditor, ScimSection, SuiteSection } from './AppSuite';
+import { ForwardAddresses, ForwardConnection, groupChoices } from './ForwardApp';
 import { GrantChoices, Notes } from './NewApp';
 
 /** What the page lets one change, as the API names it. */
@@ -40,6 +40,7 @@ type Draft = {
   accessTokenMinutes: number;
   refreshTokenDays: number;
   roles: RoleMapping[];
+  forwardAuth: string[];
 };
 
 function draftOf(app: App): Draft {
@@ -62,6 +63,7 @@ function draftOf(app: App): Draft {
     accessTokenMinutes: app.accessTokenMinutes,
     refreshTokenDays: app.refreshTokenDays,
     roles: app.roles,
+    forwardAuth: app.forwardAuth,
   };
 }
 
@@ -132,9 +134,8 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
   const body = changes(saved, draft);
   const dirty = Object.keys(body).length > 0;
   const issuer = app.issuer ?? location.origin;
-  const groupChoices: Choice[] = groups
-    .filter((group) => group.builtin !== 'everyone')
-    .map((group) => ({ id: group.id, label: groupName(group), kind: 'group' }));
+  const forward = app.template === FORWARD_AUTH;
+  const choices = groupChoices(groups);
 
   const save = () =>
     run(async () => {
@@ -162,34 +163,38 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
         <AppBadges app={app} />
       </p>
 
-      <Section title={t('Verbindung')} lead={t('Das trägst du auf der Seite der App ein.')}>
-        <div className="field">
-          <span>{t('Client-ID')}</span>
-          <CopyField value={app.clientId} label={t('Client-ID')} />
-        </div>
-        <div className="field">
-          <span>{t('Client-Secret')}</span>
-          <div className="secret-line">
-            <span className="muted">
-              {app.public
-                ? t('Keins – eine öffentliche App meldet sich mit PKCE an.')
-                : t('Nur beim Anlegen zu sehen. Verloren? Mach ein neues.')}
-            </span>
-            <button type="button" onClick={() => setDialog('secret')}>
-              <Icon name="refresh" />
-              {t('Neues Secret')}
-            </button>
+      {forward ? (
+        <ForwardConnection />
+      ) : (
+        <Section title={t('Verbindung')} lead={t('Das trägst du auf der Seite der App ein.')}>
+          <div className="field">
+            <span>{t('Client-ID')}</span>
+            <CopyField value={app.clientId} label={t('Client-ID')} />
           </div>
-        </div>
-        <div className="field">
-          <span>{t('Issuer')}</span>
-          <CopyField value={issuer} label={t('Issuer')} />
-        </div>
-        <div className="field">
-          <span>{t('Discovery-URL')}</span>
-          <CopyField value={discoveryUrl(issuer)} label={t('Discovery-URL')} />
-        </div>
-      </Section>
+          <div className="field">
+            <span>{t('Client-Secret')}</span>
+            <div className="secret-line">
+              <span className="muted">
+                {app.public
+                  ? t('Keins – eine öffentliche App meldet sich mit PKCE an.')
+                  : t('Nur beim Anlegen zu sehen. Verloren? Mach ein neues.')}
+              </span>
+              <button type="button" onClick={() => setDialog('secret')}>
+                <Icon name="refresh" />
+                {t('Neues Secret')}
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <span>{t('Issuer')}</span>
+            <CopyField value={issuer} label={t('Issuer')} />
+          </div>
+          <div className="field">
+            <span>{t('Discovery-URL')}</span>
+            <CopyField value={discoveryUrl(issuer)} label={t('Discovery-URL')} />
+          </div>
+        </Section>
+      )}
       {app.notes && <Notes text={app.notes} name={app.name} />}
       {app.suite && <SuiteSection suite={app.suite} />}
 
@@ -252,7 +257,7 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
           <span>{t('Nur für diese Gruppen')}</span>
           <Picker
             label={t('Nur für diese Gruppen')}
-            choices={groupChoices}
+            choices={choices}
             picked={draft.allowedGroups}
             onChange={(allowedGroups) => set({ allowedGroups })}
             empty={t('Alle dürfen.')}
@@ -270,180 +275,198 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
             onChange={(requireMfa) => set({ requireMfa })}
           />
         </Row>
-        <Row
-          label={t('Vorher um Erlaubnis fragen')}
-          description={t(
-            'Beim ersten Anmelden sieht jede Person, was die App bekommt, und sagt Ja oder Nein. Für Apps, die jemand anderes betreibt.',
-          )}
-        >
-          <Toggle
-            label={t('Vorher um Erlaubnis fragen')}
-            checked={draft.consent}
-            onChange={(consent) => set({ consent })}
-          />
-        </Row>
-      </Section>
-
-      <Section
-        title={t('Rollen')}
-        lead={t(
-          'Welche Gruppen welche Rolle in der App haben – die App liest sie aus dem Claim „roles“.',
-        )}
-      >
-        <RolesEditor
-          roles={draft.roles}
-          known={app.suite?.roles ?? null}
-          groups={groups}
-          onChange={(roles) => set({ roles })}
-        />
-      </Section>
-
-      <ScimSection app={app} onChanged={onSaved} />
-
-      <Section title={t('Adressen')}>
-        <div className="field">
-          <span>{t('Weiterleitungs-Adressen')}</span>
-          <UriList
-            label={t('Weiterleitungs-Adressen')}
-            values={draft.redirectUris}
-            onChange={(redirectUris) => set({ redirectUris })}
-            placeholder="https://app.example.com/oauth/callback"
-          />
-          <small className="field-hint">
-            {t('Nur an diese Adressen schickt UwUAuth nach dem Anmelden zurück.')}
-          </small>
-        </div>
-        <div className="field">
-          <span>{t('Adressen nach dem Abmelden')}</span>
-          <UriList
-            label={t('Adressen nach dem Abmelden')}
-            values={draft.postLogoutRedirectUris}
-            onChange={(postLogoutRedirectUris) => set({ postLogoutRedirectUris })}
-            placeholder="https://app.example.com/"
-          />
-        </div>
-        <label className="field">
-          <span>{t('Back-Channel-Logout (freiwillig)')}</span>
-          <input
-            value={draft.backchannelLogoutUri}
-            onChange={(e) => set({ backchannelLogoutUri: e.target.value })}
-            placeholder="https://app.example.com/oauth/backchannel-logout"
-            inputMode="url"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-          <small className="field-hint">
-            {t('Hierhin sagt UwUAuth der App Bescheid, wenn sich jemand abmeldet.')}
-          </small>
-        </label>
-      </Section>
-
-      <Section title={t('Technik')}>
-        <Row
-          label={t('Öffentliche App, ohne Geheimnis')}
-          description={
-            app.public
-              ? t('Mit „Neues Secret“ wird daraus eine App mit Geheimnis.')
-              : draft.public
-                ? t(
-                    'Beim Speichern verfällt das Secret – die App meldet sich dann nur noch mit PKCE an.',
-                  )
-                : t(
-                    'Für Apps auf dem Handy, im Browser oder auf dem Fernseher, die kein Geheimnis sicher aufbewahren können.',
-                  )
-          }
-        >
-          <Toggle
-            label={t('Öffentliche App, ohne Geheimnis')}
-            checked={draft.public}
-            disabled={app.public}
-            onChange={(isPublic) => set({ public: isPublic })}
-          />
-        </Row>
-        {!draft.public && (
+        {!forward && (
           <Row
-            label={t('Wie die App ihr Secret schickt')}
-            description={t('Steht in der Anleitung der App; fast alle nehmen „Basic“.')}
+            label={t('Vorher um Erlaubnis fragen')}
+            description={t(
+              'Beim ersten Anmelden sieht jede Person, was die App bekommt, und sagt Ja oder Nein. Für Apps, die jemand anderes betreibt.',
+            )}
           >
-            <Segmented
-              label={t('Wie die App ihr Secret schickt')}
-              value={
-                draft.tokenAuthMethod === 'client_secret_post'
-                  ? 'client_secret_post'
-                  : 'client_secret_basic'
-              }
-              options={[
-                { value: 'client_secret_basic', label: 'Basic' },
-                { value: 'client_secret_post', label: 'POST' },
-              ]}
-              onChange={(tokenAuthMethod) => set({ tokenAuthMethod })}
+            <Toggle
+              label={t('Vorher um Erlaubnis fragen')}
+              checked={draft.consent}
+              onChange={(consent) => set({ consent })}
             />
           </Row>
         )}
-        <Row
-          label={t('Signatur des ID-Tokens')}
-          description={t('RS256 versteht jede App. ES256 nur, wenn die App es verlangt.')}
-        >
-          <Segmented
-            label={t('Signatur des ID-Tokens')}
-            value={draft.idTokenAlg}
-            options={[
-              { value: 'RS256', label: 'RS256' },
-              { value: 'ES256', label: 'ES256' },
-            ]}
-            onChange={(idTokenAlg) => set({ idTokenAlg })}
-          />
-        </Row>
-        <Row
-          label={t('PKCE immer verlangen')}
-          description={t(
-            'Öffentliche Apps brauchen PKCE sowieso. Für Apps mit Secret ist es ein Extra-Schutz.',
-          )}
-        >
-          <Toggle
-            label={t('PKCE immer verlangen')}
-            checked={draft.requirePkce || draft.public}
-            disabled={draft.public}
-            onChange={(requirePkce) => set({ requirePkce })}
-          />
-        </Row>
-        <Row
-          label={t('Access-Token gilt')}
-          description={t('Minuten. Je kürzer, desto schneller greifen Sperren und Zeitfenster.')}
-        >
-          <input
-            className="number-input"
-            type="number"
-            min={1}
-            max={1440}
-            value={draft.accessTokenMinutes}
-            onChange={(e) => set({ accessTokenMinutes: Number(e.target.value) || 15 })}
-          />
-        </Row>
-        <Row label={t('Angemeldet bleiben bis zu')} description={t('Tage ohne neues Anmelden.')}>
-          <input
-            className="number-input"
-            type="number"
-            min={1}
-            max={3650}
-            value={draft.refreshTokenDays}
-            onChange={(e) => set({ refreshTokenDays: Number(e.target.value) || 30 })}
-          />
-        </Row>
-        <div className="field">
-          <span>{t('Wie die App an Tokens kommt')}</span>
-          <GrantChoices
-            grants={draft.grantTypes}
-            onToggle={(grant, on) =>
-              set({
-                grantTypes: on
-                  ? [...draft.grantTypes, grant]
-                  : draft.grantTypes.filter((other) => other !== grant),
-              })
-            }
-          />
-        </div>
       </Section>
+
+      {forward ? (
+        <Section title={t('Adressen')}>
+          <ForwardAddresses
+            values={draft.forwardAuth}
+            onChange={(forwardAuth) => set({ forwardAuth })}
+          />
+        </Section>
+      ) : (
+        <>
+          <Section
+            title={t('Rollen')}
+            lead={t(
+              'Welche Gruppen welche Rolle in der App haben – die App liest sie aus dem Claim „roles“.',
+            )}
+          >
+            <RolesEditor
+              roles={draft.roles}
+              known={app.suite?.roles ?? null}
+              groups={groups}
+              onChange={(roles) => set({ roles })}
+            />
+          </Section>
+
+          <ScimSection app={app} onChanged={onSaved} />
+
+          <Section title={t('Adressen')}>
+            <div className="field">
+              <span>{t('Weiterleitungs-Adressen')}</span>
+              <UriList
+                label={t('Weiterleitungs-Adressen')}
+                values={draft.redirectUris}
+                onChange={(redirectUris) => set({ redirectUris })}
+                placeholder="https://app.example.com/oauth/callback"
+              />
+              <small className="field-hint">
+                {t('Nur an diese Adressen schickt UwUAuth nach dem Anmelden zurück.')}
+              </small>
+            </div>
+            <div className="field">
+              <span>{t('Adressen nach dem Abmelden')}</span>
+              <UriList
+                label={t('Adressen nach dem Abmelden')}
+                values={draft.postLogoutRedirectUris}
+                onChange={(postLogoutRedirectUris) => set({ postLogoutRedirectUris })}
+                placeholder="https://app.example.com/"
+              />
+            </div>
+            <label className="field">
+              <span>{t('Back-Channel-Logout (freiwillig)')}</span>
+              <input
+                value={draft.backchannelLogoutUri}
+                onChange={(e) => set({ backchannelLogoutUri: e.target.value })}
+                placeholder="https://app.example.com/oauth/backchannel-logout"
+                inputMode="url"
+                autoCapitalize="none"
+                spellCheck={false}
+              />
+              <small className="field-hint">
+                {t('Hierhin sagt UwUAuth der App Bescheid, wenn sich jemand abmeldet.')}
+              </small>
+            </label>
+          </Section>
+
+          <Section title={t('Technik')}>
+            <Row
+              label={t('Öffentliche App, ohne Geheimnis')}
+              description={
+                app.public
+                  ? t('Mit „Neues Secret“ wird daraus eine App mit Geheimnis.')
+                  : draft.public
+                    ? t(
+                        'Beim Speichern verfällt das Secret – die App meldet sich dann nur noch mit PKCE an.',
+                      )
+                    : t(
+                        'Für Apps auf dem Handy, im Browser oder auf dem Fernseher, die kein Geheimnis sicher aufbewahren können.',
+                      )
+              }
+            >
+              <Toggle
+                label={t('Öffentliche App, ohne Geheimnis')}
+                checked={draft.public}
+                disabled={app.public}
+                onChange={(isPublic) => set({ public: isPublic })}
+              />
+            </Row>
+            {!draft.public && (
+              <Row
+                label={t('Wie die App ihr Secret schickt')}
+                description={t('Steht in der Anleitung der App; fast alle nehmen „Basic“.')}
+              >
+                <Segmented
+                  label={t('Wie die App ihr Secret schickt')}
+                  value={
+                    draft.tokenAuthMethod === 'client_secret_post'
+                      ? 'client_secret_post'
+                      : 'client_secret_basic'
+                  }
+                  options={[
+                    { value: 'client_secret_basic', label: 'Basic' },
+                    { value: 'client_secret_post', label: 'POST' },
+                  ]}
+                  onChange={(tokenAuthMethod) => set({ tokenAuthMethod })}
+                />
+              </Row>
+            )}
+            <Row
+              label={t('Signatur des ID-Tokens')}
+              description={t('RS256 versteht jede App. ES256 nur, wenn die App es verlangt.')}
+            >
+              <Segmented
+                label={t('Signatur des ID-Tokens')}
+                value={draft.idTokenAlg}
+                options={[
+                  { value: 'RS256', label: 'RS256' },
+                  { value: 'ES256', label: 'ES256' },
+                ]}
+                onChange={(idTokenAlg) => set({ idTokenAlg })}
+              />
+            </Row>
+            <Row
+              label={t('PKCE immer verlangen')}
+              description={t(
+                'Öffentliche Apps brauchen PKCE sowieso. Für Apps mit Secret ist es ein Extra-Schutz.',
+              )}
+            >
+              <Toggle
+                label={t('PKCE immer verlangen')}
+                checked={draft.requirePkce || draft.public}
+                disabled={draft.public}
+                onChange={(requirePkce) => set({ requirePkce })}
+              />
+            </Row>
+            <Row
+              label={t('Access-Token gilt')}
+              description={t(
+                'Minuten. Je kürzer, desto schneller greifen Sperren und Zeitfenster.',
+              )}
+            >
+              <input
+                className="number-input"
+                type="number"
+                min={1}
+                max={1440}
+                value={draft.accessTokenMinutes}
+                onChange={(e) => set({ accessTokenMinutes: Number(e.target.value) || 15 })}
+              />
+            </Row>
+            <Row
+              label={t('Angemeldet bleiben bis zu')}
+              description={t('Tage ohne neues Anmelden.')}
+            >
+              <input
+                className="number-input"
+                type="number"
+                min={1}
+                max={3650}
+                value={draft.refreshTokenDays}
+                onChange={(e) => set({ refreshTokenDays: Number(e.target.value) || 30 })}
+              />
+            </Row>
+            <div className="field">
+              <span>{t('Wie die App an Tokens kommt')}</span>
+              <GrantChoices
+                grants={draft.grantTypes}
+                onToggle={(grant, on) =>
+                  set({
+                    grantTypes: on
+                      ? [...draft.grantTypes, grant]
+                      : draft.grantTypes.filter((other) => other !== grant),
+                  })
+                }
+              />
+            </div>
+          </Section>
+        </>
+      )}
 
       {dirty && (
         <div className="form-actions sticky-actions">
@@ -455,7 +478,11 @@ function AppEditor({ app, groups, onSaved }: { app: App; groups: Group[]; onSave
           <button
             type="button"
             className="primary"
-            disabled={busy || !draft.name.trim() || draft.grantTypes.length === 0}
+            disabled={
+              busy ||
+              !draft.name.trim() ||
+              (forward ? draft.forwardAuth.length === 0 : draft.grantTypes.length === 0)
+            }
             onClick={() => void save()}
           >
             {t('Speichern')}

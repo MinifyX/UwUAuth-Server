@@ -12,6 +12,7 @@
 
 pub mod crypto;
 mod errors;
+pub mod forward_auth;
 mod health;
 pub mod hibp;
 mod info;
@@ -219,6 +220,7 @@ pub fn router(state: AppState) -> Router {
         .merge(settings::routes())
         .merge(routes::routes())
         .merge(oidc::routes())
+        .merge(forward_auth::routes())
         .merge(suite::routes())
         .merge(web::routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

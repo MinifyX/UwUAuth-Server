@@ -238,7 +238,13 @@ async fn signed_in(parts: &Parts, state: &AppState) -> ApiResult<Me> {
 /// something else when nobody is signed in, like `/oauth/authorize`.
 pub async fn from_headers(state: &AppState, headers: &HeaderMap, ip: IpAddr) -> ApiResult<Option<Me>> {
     let Some(token) = cookie(headers, SESSION_COOKIE) else { return Ok(None) };
-    let id = sha256(token.as_bytes());
+    from_session_id(state, &sha256(token.as_bytes()), ip).await
+}
+
+/// The session with this id (the SHA-256 of its cookie), if it is alive: its person still active
+/// and still with the security stamp it started with. Seen again at most once a minute.
+pub async fn from_session_id(state: &AppState, id: &[u8], ip: IpAddr) -> ApiResult<Option<Me>> {
+    let id = id.to_vec();
     let Some(session) = state.store.session(&id).await? else { return Ok(None) };
     let Some(person) = state.store.person(&session.person_id).await? else { return Ok(None) };
     if !person.active() || person.security_stamp != session.stamp {
@@ -360,7 +366,8 @@ pub(crate) async fn csrf(State(state): State<AppState>, request: Request, next: 
     let unsafe_method = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
     // The protocol endpoints under /oauth take forms from apps and browsers of other sites by
     // design, and do nothing with the cookie but look who is signed in.
-    let api = request.uri().path().starts_with("/uwu/");
+    // Forward auth only reads: a proxy asks with the method of the request it guards.
+    let api = request.uri().path().starts_with("/uwu/") && !request.uri().path().starts_with("/uwu/v1/forward-auth");
     let headers = request.headers();
     if api && unsafe_method && cookie(headers, SESSION_COOKIE).is_some() && bearer(headers).is_none() {
         let origin = headers.get("origin").and_then(|value| value.to_str().ok());

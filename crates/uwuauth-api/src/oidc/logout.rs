@@ -101,7 +101,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params) 
         end(state, &me.session.id, &me.person.id, ip).await?;
         let clear = set_cookie(state, SESSION_COOKIE, "", Some(0));
         let to = redirect.unwrap_or_else(|| format!("{}/#/signed-out", state.config.public));
-        return Ok(with_cookies(Redirect::to(&to).into_response(), vec![clear]));
+        return Ok(with_cookies(Redirect::to(&to).into_response(), vec![clear, crate::forward_auth::clear(state)]));
     }
     let id = random_token(18);
     state.oidc().logouts.put(id.clone(), LogoutRequest { redirect, app: app.map(|app| app.name) });
@@ -143,6 +143,7 @@ async fn confirm(
     {
         end(&state, &me.session.id, &me.person.id, ip).await?;
         cookies.push(set_cookie(&state, SESSION_COOKIE, "", Some(0)));
+        cookies.push(crate::forward_auth::clear(&state));
     }
     let to = match (decision.confirm, request.redirect) {
         (true, Some(redirect)) => redirect,
@@ -155,6 +156,7 @@ async fn confirm(
 /// End a browser session and tell the apps that signed in with it.
 pub async fn end(state: &AppState, session_id: &[u8], person: &str, ip: IpAddr) -> ApiResult<()> {
     state.store.end_session(session_id).await?;
+    state.memory.forward_auth.forget_session(session_id);
     audit(state, "logout", Some(person), Some(person), None, &ip, json!({})).await;
     backchannel(state, &sid(session_id), person).await
 }

@@ -341,7 +341,7 @@ async fn logout(State(state): State<AppState>, ClientIp(ip): ClientIp, headers: 
     // The apps that signed in with this session hear about it (back-channel logout).
     crate::oidc::logout::end_from_headers(&state, &headers, ip).await?;
     let clear = set_cookie(&state, SESSION_COOKIE, "", Some(0));
-    Ok(with_cookies(StatusCode::NO_CONTENT.into_response(), vec![clear]))
+    Ok(with_cookies(StatusCode::NO_CONTENT.into_response(), vec![clear, crate::forward_auth::clear(&state)]))
 }
 
 #[derive(Deserialize)]

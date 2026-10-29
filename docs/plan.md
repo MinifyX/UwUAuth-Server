@@ -5,10 +5,10 @@ einer Stelle, und jede App meldet sich darüber an — per OpenID Connect, LDAP,
 hinter einem Reverse-Proxy. Gedacht für die Familie zuhause und das kleine Büro, gebaut so, dass
 später auch eine Firma damit auskommt.
 
-Stand: September 2026. Stufen 0 bis 3 sind fertig (0.3: Benutzerverwaltung, OpenID Connect,
-LDAP), dazu UwUAuths Seite von Stufe 4 (0.4: Kopplung mit der UwUSuite, SCIM an Apps). Die
-Suite-Apps bauen ihre Seite der Kopplung jeweils in ihrem eigenen Repository; als Nächstes kommt
-hier Stufe 5 (Forward-Auth).
+Stand: Oktober 2026. Stufen 0 bis 3 sind fertig (0.3: Benutzerverwaltung, OpenID Connect,
+LDAP), dazu UwUAuths Seite von Stufe 4 (0.4: Kopplung mit der UwUSuite, SCIM an Apps) und
+Stufe 5 (0.5: Forward-Auth für Reverse-Proxies). Die Suite-Apps bauen ihre Seite der Kopplung
+jeweils in ihrem eigenen Repository; als Nächstes kommt hier Stufe 6 (SAML 2.0).
 
 ## Leitlinien
 
@@ -293,16 +293,16 @@ Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
 - [x] `/.well-known/uwusuite` für die automatische Erkennung unter derselben Domain (im selben
       Netz: siehe oben)
 
-### Stufe 5 — Forward-Auth für Reverse-Proxies (0.5)
+### Stufe 5 — Forward-Auth für Reverse-Proxies (0.5, fertig)
 
-- [ ] `/uwu/v1/forward-auth` für Caddy (`forward_auth`), Traefik (ForwardAuth), nginx
+- [x] `/uwu/v1/forward-auth` für Caddy (`forward_auth`), Traefik (ForwardAuth), nginx
       (`auth_request`) und Nginx Proxy Manager; gibt `Remote-User`, `Remote-Groups`,
       `Remote-Email`, `Remote-Name` weiter
-- [ ] Sitzungs-Cookie für die ganze Domain, Regeln pro Host und Pfad (Gruppen, Zeitfenster,
+- [x] Sitzungs-Cookie für die ganze Domain, Regeln pro Host und Pfad (Gruppen, Zeitfenster,
       zweiter Faktor)
-- [ ] Damit lassen sich Apps ohne eigene Anmeldung schützen, und Zeitfenster für Kinder gelten
+- [x] Damit lassen sich Apps ohne eigene Anmeldung schützen, und Zeitfenster für Kinder gelten
       auch dort
-- [ ] Beispiele für jeden Proxy in `docs/`, im CI gegen einen echten Caddy getestet
+- [x] Beispiele für jeden Proxy in `docs/`, im CI gegen einen echten Caddy getestet
 
 ### Stufe 6 — SAML 2.0 (0.6)
 

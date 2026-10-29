@@ -1,9 +1,10 @@
 name: Interop
 
 # Real apps against UwUAuth: Grafana and Forgejo sign in with OpenID Connect in a browser,
-# Nextcloud finds people over LDAP and signs in with OpenID Connect. Too slow and too big for
-# every push (the images alone are gigabytes), so: once a week, for every release tag, and by
-# hand. The same SSSD test as in CI runs here too, against the same build.
+# Nextcloud finds people over LDAP and signs in with OpenID Connect, Caddy guards an app with
+# forward auth. Too slow and too big for every push (the images alone are gigabytes), so: once a
+# week, for every release tag, and by hand. The same SSSD test as in CI runs here too, against
+# the same build.
 on:
   schedule:
     - cron: "17 4 * * 1"
@@ -55,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        apps: [ldap, oidc, nextcloud]
+        apps: [ldap, oidc, nextcloud, forward-auth]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

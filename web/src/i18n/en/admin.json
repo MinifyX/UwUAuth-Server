@@ -246,5 +246,16 @@
   "{n} Personen neu": "{n} new people",
   "{n} Personen gab es schon": "{n} people existed already",
   "{n} Personen gingen nicht:": "{n} people did not work:",
-  "{n} Gruppen neu, {m} gab es schon": "{n} new groups, {m} existed already"
+  "{n} Gruppen neu, {m} gab es schon": "{n} new groups, {m} existed already",
+  "Für Apps ohne eigene Anmeldung: Caddy, Traefik, nginx oder Nginx Proxy Manager fragt bei jeder Anfrage UwUAuth, ob die Person hinein darf.": "For apps without their own sign-in: Caddy, Traefik, nginx or Nginx Proxy Manager asks UwUAuth on every request whether the person may come in.",
+  "Geschützte Adressen": "Protected addresses",
+  "Ein Host, wenn nötig mit Port und Pfad: wiki.example.com oder example.com/admin. Die genaueste Adresse entscheidet; einen Host, den keine App kennt, lässt UwUAuth nicht durch.": "A host, with port and path if needed: wiki.example.com or example.com/admin. The most specific address decides; UwUAuth lets nothing through to a host no app knows.",
+  "Das trägst du im Reverse-Proxy ein. Wie genau, steht in der Anleitung unter docs/forward-auth.md.": "This goes into your reverse proxy. How exactly is in the guide at docs/forward-auth.md.",
+  "Für Caddy, Traefik und Nginx Proxy Manager": "For Caddy, Traefik and Nginx Proxy Manager",
+  "Für nginx (auth_request)": "For nginx (auth_request)",
+  "Die App bekommt Remote-User, Remote-Groups, Remote-Email und Remote-Name. Für Apps auf anderen Hosts als UwUAuth braucht es in den Einstellungen eine Cookie-Domain.": "The app gets Remote-User, Remote-Groups, Remote-Email and Remote-Name. Apps on other hosts than UwUAuth need a cookie domain in the settings.",
+  "Jetzt fehlt nur noch der Reverse-Proxy: Trag dort diese Adresse ein.": "Now only the reverse proxy is missing: enter this address there.",
+  "Apps ohne eigene Anmeldung, hinter einem Reverse-Proxy": "Apps without their own sign-in, behind a reverse proxy",
+  "Cookie-Domain für Forward-Auth": "Cookie domain for forward auth",
+  "Leer lassen, solange alle Apps hinter Forward-Auth auf dem Host von UwUAuth liegen. Mit einer Domain wie example.com gilt die Anmeldung für Forward-Auth auf allen Hosts darunter – trag sie nur ein, wenn du allen diesen Hosts traust.": "Leave empty as long as all apps behind forward auth live on UwUAuth's own host. With a domain like example.com, the forward-auth sign-in counts on every host below it – only enter one if you trust all those hosts."
 }

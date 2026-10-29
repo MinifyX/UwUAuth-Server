@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { PageTitle } from '../components/Shell';
 import { api, seg } from '../lib/api';
+import { FORWARD_AUTH } from '../lib/apps';
 import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { go } from '../lib/route';
@@ -44,7 +45,11 @@ export function AppBadges({ app }: { app: App }) {
       {app.disabled && <Badge tone="alarm">{t('aus')}</Badge>}
       {app.suite && <Badge tone="ok">UwUSuite</Badge>}
       {app.scim?.error && <Badge tone="alarm">{t('SCIM-Fehler')}</Badge>}
-      {app.public && <Badge>{t('öffentlich')}</Badge>}
+      {app.template === FORWARD_AUTH ? (
+        <Badge>Forward-Auth</Badge>
+      ) : (
+        app.public && <Badge>{t('öffentlich')}</Badge>
+      )}
       {app.requireMfa && <Badge>{t('zweiter Faktor')}</Badge>}
       {app.consent && <Badge>{t('fragt nach')}</Badge>}
       {app.allowedGroups.length > 0 && <Badge>{t('nur für Gruppen')}</Badge>}

@@ -190,5 +190,7 @@
   "Admins": "Admins",
   "Alle": "Everyone",
   "Bestätige mit deinem Passkey – ein Passwort allein reicht hier nicht.": "Confirm with your passkey — a password alone is not enough here.",
-  "Setz hier ein neues Passwort. Dein Passkey oder deine Authenticator-App bleibt und wird danach abgefragt.": "Set a new password here. Your passkey or authenticator app stays and is asked for next."
+  "Setz hier ein neues Passwort. Dein Passkey oder deine Authenticator-App bleibt und wird danach abgefragt.": "Set a new password here. Your passkey or authenticator app stays and is asked for next.",
+  "Mit dieser Adresse klappt es nicht: {reason}": "That address does not work: {reason}",
+  "Die Cookie-Domain muss eine Domain wie example.com sein, in der auch die Adresse von UwUAuth liegt.": "The cookie domain has to be a domain like example.com that UwUAuth's own address is in."
 }

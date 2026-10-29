@@ -93,3 +93,12 @@ export function appLetters(name: string): string {
   }
   return ([...words[0]!][0]! + [...words[1]!][0]!).toUpperCase();
 }
+
+/** The template key of apps a reverse proxy guards through forward auth. */
+export const FORWARD_AUTH = 'forward-auth';
+
+/** Where a reverse proxy asks UwUAuth, for the proxies that read redirects and for nginx. */
+export function forwardAuthUrls(origin: string): { proxy: string; nginx: string } {
+  const base = origin.replace(/\/+$/, '');
+  return { proxy: `${base}/uwu/v1/forward-auth`, nginx: `${base}/uwu/v1/forward-auth/nginx` };
+}

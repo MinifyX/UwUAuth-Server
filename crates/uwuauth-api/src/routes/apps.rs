@@ -87,6 +87,8 @@ pub struct NewApp {
     pub access_token_minutes: Option<i64>,
     pub refresh_token_days: Option<i64>,
     pub launch_url: Option<String>,
+    /// For a forward-auth app: the addresses its reverse proxy guards (`host` or `host/path`).
+    pub forward_auth: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -122,11 +124,27 @@ pub async fn check_new(state: &AppState, new: &NewApp) -> ApiResult<()> {
 /// Check what an app is made of and keep it. Its secret, if it has one, comes back once.
 pub async fn make(state: &AppState, new: NewApp, created_by: Option<&str>) -> ApiResult<(App, Option<String>)> {
     let (app, secret) = prepare(state, new, created_by).await?;
-    Ok((state.store.create_app(app).await?, secret))
+    let app = state.store.create_app(app).await?;
+    state.memory.forward_auth.apps_changed();
+    Ok((app, secret))
 }
 
 /// Check what an app is made of, without keeping it: the app, and its secret if it has one.
 pub async fn prepare(state: &AppState, new: NewApp, created_by: Option<&str>) -> ApiResult<(App, Option<String>)> {
+    // A forward-auth app speaks no OpenID Connect: no secret, no grants, no redirect addresses.
+    let new = if forward(&new) {
+        NewApp {
+            template: Some(crate::forward_auth::TEMPLATE.into()),
+            public: true,
+            grant_types: Some(Vec::new()),
+            redirect_uris: Vec::new(),
+            post_logout_redirect_uris: Vec::new(),
+            backchannel_logout_uri: None,
+            ..new
+        }
+    } else {
+        new
+    };
     let template = new.template.as_deref().and_then(templates::find);
     let url = new.url.as_deref().map(str::trim).filter(|url| !url.is_empty()).unwrap_or_default();
     let slug = new.slug.as_deref().filter(|slug| !slug.is_empty()).unwrap_or("uwuauth");
@@ -161,7 +179,11 @@ pub async fn prepare(state: &AppState, new: NewApp, created_by: Option<&str>) ->
         client_id: client_id(&name),
         name,
         template: template.map(|template| template.key.to_string()).or_else(|| {
-            new.template.clone().filter(|key| key == crate::oidc::register::REGISTERED || key == crate::suite::TEMPLATE)
+            new.template.clone().filter(|key| {
+                key == crate::oidc::register::REGISTERED
+                    || key == crate::suite::TEMPLATE
+                    || key == crate::forward_auth::TEMPLATE
+            })
         }),
         secret_hash: secret.as_ref().map(|secret| sha256(secret.as_bytes())),
         token_auth_method: if new.public { "none".into() } else { app.token_auth_method },
@@ -171,8 +193,41 @@ pub async fn prepare(state: &AppState, new: NewApp, created_by: Option<&str>) ->
     Ok((app, secret))
 }
 
+/// Whether `new` is a forward-auth app.
+fn forward(new: &NewApp) -> bool {
+    new.template.as_deref() == Some(crate::forward_auth::TEMPLATE) || !new.forward_auth.is_empty()
+}
+
+/// A forward-auth app's addresses, each in one spelling, none twice and none another app has.
+async fn forward_addresses(state: &AppState, app_id: &str, given: &[String]) -> ApiResult<Vec<String>> {
+    let field = |message: String| ApiError::field("forwardAuth", "address", message);
+    let mut addresses: Vec<String> = Vec::new();
+    for text in given.iter().filter(|text| !text.trim().is_empty()) {
+        let address = crate::forward_auth::address(text).map_err(field)?;
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    if addresses.len() > 50 {
+        return Err(field("At most 50 addresses.".into()));
+    }
+    if !addresses.is_empty() {
+        for other in state.store.apps().await?.into_iter().filter(|other| other.id != app_id) {
+            if let Some(taken) = addresses.iter().find(|address| other.forward_auth.contains(address)) {
+                return Err(field(format!("{taken} belongs to {} already.", other.name)));
+            }
+        }
+    }
+    Ok(addresses)
+}
+
 /// Everything but the name, the id and the secret, checked and put onto `app`.
 async fn fields(state: &AppState, mut app: App, new: NewApp) -> ApiResult<App> {
+    let forward_auth = forward_addresses(state, &app.id, &new.forward_auth).await?;
+    let forward = forward(&new);
+    if forward && forward_auth.is_empty() {
+        return Err(ApiError::field("forwardAuth", "required", "A forward-auth app needs an address."));
+    }
     for uri in new.redirect_uris.iter().chain(&new.post_logout_redirect_uris) {
         check_admin_uri(uri).map_err(|message| ApiError::field("redirectUris", "redirect_uri", message))?;
     }
@@ -184,8 +239,10 @@ async fn fields(state: &AppState, mut app: App, new: NewApp) -> ApiResult<App> {
     {
         return Err(ApiError::field("launchUrl", "url", "The address to open the app is an http(s) address."));
     }
-    let grants = new.grant_types.clone().unwrap_or_else(|| vec!["authorization_code".into(), "refresh_token".into()]);
-    if grants.is_empty() || grants.iter().any(|grant| !GRANTS.contains(&grant.as_str())) {
+    let grants = new.grant_types.clone().unwrap_or_else(|| {
+        if forward { Vec::new() } else { vec!["authorization_code".into(), "refresh_token".into()] }
+    });
+    if (grants.is_empty() && !forward) || grants.iter().any(|grant| !GRANTS.contains(&grant.as_str())) {
         return Err(ApiError::field("grantTypes", "grant_types", "Unknown grant type."));
     }
     if grants.iter().any(|grant| grant == "authorization_code") && new.redirect_uris.is_empty() {
@@ -221,6 +278,12 @@ async fn fields(state: &AppState, mut app: App, new: NewApp) -> ApiResult<App> {
     app.access_token_minutes = new.access_token_minutes.unwrap_or(15).clamp(1, 24 * 60);
     app.refresh_token_days = new.refresh_token_days.unwrap_or(30).clamp(1, 3650);
     app.launch_url = new.launch_url.filter(|url| !url.is_empty());
+    if forward && app.launch_url.is_none() {
+        // The first address opens the app, as the browser reaches it.
+        let scheme = if state.config.public.starts_with("https://") { "https" } else { "http" };
+        app.launch_url = forward_auth.first().map(|address| format!("{scheme}://{address}"));
+    }
+    app.forward_auth = forward_auth;
     Ok(app)
 }
 
@@ -246,6 +309,7 @@ pub fn app_view(app: &App) -> Value {
         "accessTokenMinutes": app.access_token_minutes,
         "refreshTokenDays": app.refresh_token_days,
         "launchUrl": app.launch_url,
+        "forwardAuth": app.forward_auth,
         "disabled": app.disabled,
         "created": app.created,
         "updated": app.updated,
@@ -320,6 +384,7 @@ struct Change {
     refresh_token_days: Option<i64>,
     /// An empty string takes it away.
     launch_url: Option<String>,
+    forward_auth: Option<Vec<String>>,
 }
 
 /// The app as `NewApp`, with what `change` says on top.
@@ -327,7 +392,8 @@ fn merged(current: &App, change: Change, public: bool) -> NewApp {
     NewApp {
         name: current.name.clone(),
         description: Some(change.description.unwrap_or_else(|| current.description.clone())),
-        template: None,
+        // Only to tell a forward-auth app; the template's addresses are not filled in again.
+        template: current.template.clone(),
         url: None,
         slug: None,
         redirect_uris: change.redirect_uris.unwrap_or_else(|| current.redirect_uris.clone()),
@@ -347,6 +413,7 @@ fn merged(current: &App, change: Change, public: bool) -> NewApp {
         access_token_minutes: Some(change.access_token_minutes.unwrap_or(current.access_token_minutes)),
         refresh_token_days: Some(change.refresh_token_days.unwrap_or(current.refresh_token_days)),
         launch_url: change.launch_url.or_else(|| current.launch_url.clone()),
+        forward_auth: change.forward_auth.unwrap_or_else(|| current.forward_auth.clone()),
     }
 }
 
@@ -380,6 +447,7 @@ async fn change(
         })
         .await?
         .ok_or_else(ApiError::not_found)?;
+    state.memory.forward_auth.apps_changed();
     audit(&state, "app_changed", Some(&admin.actor_id()), None, Some(&id), &ip, json!({ "name": updated.name })).await;
     // Who may use it or its roles may have changed: that goes to the app over SCIM.
     state.scim.wake();
@@ -396,6 +464,7 @@ async fn remove(
 ) -> ApiResult<StatusCode> {
     let app = state.store.app(&id).await?.ok_or_else(ApiError::not_found)?;
     state.store.delete_app(&id).await?;
+    state.memory.forward_auth.apps_changed();
     audit(&state, "app_deleted", Some(&admin.actor_id()), None, Some(&id), &ip, json!({ "name": app.name })).await;
     Ok(StatusCode::NO_CONTENT)
 }

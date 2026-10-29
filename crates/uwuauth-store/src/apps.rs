@@ -33,12 +33,15 @@ pub struct App {
     pub created_by: Option<String>,
     pub created: String,
     pub updated: String,
+    /// Addresses a reverse proxy guards with forward auth: `host` or `host/path-prefix`. Empty for
+    /// an OpenID Connect app.
+    pub forward_auth: Vec<String>,
 }
 
 const APP_COLUMNS: &str = "id, client_id, name, description, template, secret_hash, redirect_uris, \
      post_logout_redirect_uris, backchannel_logout_uri, grant_types, token_auth_method, id_token_alg, consent, \
      require_pkce, allowed_groups, require_mfa, roles, access_token_minutes, refresh_token_days, launch_url, disabled, \
-     created_by, created, updated";
+     created_by, created, updated, forward_auth";
 
 fn list(text: String) -> Vec<String> {
     serde_json::from_str(&text).unwrap_or_default()
@@ -75,6 +78,7 @@ fn app_from(row: &Row<'_>) -> rusqlite::Result<App> {
         created_by: row.get(21)?,
         created: row.get(22)?,
         updated: row.get(23)?,
+        forward_auth: list(row.get(24)?),
     })
 }
 
@@ -174,14 +178,14 @@ pub(crate) fn write_app(tx: &rusqlite::Transaction<'_>, app: &App, insert: bool)
     let sql = if insert {
         format!(
             "INSERT INTO apps ({APP_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
-             ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)"
+             ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
         )
     } else {
         "UPDATE apps SET client_id = ?2, name = ?3, description = ?4, template = ?5, secret_hash = ?6, \
          redirect_uris = ?7, post_logout_redirect_uris = ?8, backchannel_logout_uri = ?9, grant_types = ?10, \
          token_auth_method = ?11, id_token_alg = ?12, consent = ?13, require_pkce = ?14, allowed_groups = ?15, \
          require_mfa = ?16, roles = ?17, access_token_minutes = ?18, refresh_token_days = ?19, launch_url = ?20, \
-         disabled = ?21, created_by = ?22, created = ?23, updated = ?24 WHERE id = ?1"
+         disabled = ?21, created_by = ?22, created = ?23, updated = ?24, forward_auth = ?25 WHERE id = ?1"
             .to_string()
     };
     tx.execute(
@@ -211,6 +215,7 @@ pub(crate) fn write_app(tx: &rusqlite::Transaction<'_>, app: &App, insert: bool)
             app.created_by,
             app.created,
             app.updated,
+            to_json(&app.forward_auth),
         ],
     )
     .map(drop)

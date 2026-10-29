@@ -17,9 +17,9 @@ gets back who they are, their groups, and tokens to call UwUAuth with.
 
 In the admin portal, *Apps → New app*. Pick a template if there is one for the app — Nextcloud,
 Immich, Jellyfin, Home Assistant, Forgejo/Gitea, Grafana, Paperless-ngx, Proxmox, Portainer,
-Audiobookshelf, Open WebUI — and type the app's own address: the template fills in the redirect
-addresses and says what to set on the app's side. For anything else, *OpenID Connect* and the
-redirect address from the app's documentation.
+Audiobookshelf, Open WebUI, Synology DSM, Technitium DNS — and type the app's own address: the
+template fills in the redirect addresses and says what to set on the app's side. For anything
+else, *OpenID Connect* and the redirect address from the app's documentation.
 
 Every app gets a **client ID**, and — unless it runs on people's own devices and cannot keep a
 secret (*public*) — a **client secret**, shown once. *New secret* makes another; the old one

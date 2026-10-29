@@ -282,6 +282,7 @@ async fn set_password(
     // Every other browser signs in again; this one stays.
     state.store.restamp_session(&me.session.id, &stamp).await?;
     state.store.end_sessions(&person.id, Some(&me.session.id)).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(&state, "password_changed", Some(&person.id), Some(&person.id), None, &ip, json!({})).await;
     notify(&state, &person, Mail::PasswordChanged { time: now_text(&state) });
     Ok(StatusCode::NO_CONTENT)
@@ -596,6 +597,7 @@ pub(crate) async fn end_by_short_id(state: &AppState, person: &str, short: &str)
     let sessions = state.store.sessions_of(person).await?;
     let session = sessions.iter().find(|session| hex(&session.id[..8]) == short).ok_or_else(ApiError::not_found)?;
     state.store.end_session_of(person, &session.id).await?;
+    state.memory.forward_auth.sessions_ended();
     Ok(())
 }
 
@@ -606,6 +608,7 @@ async fn end_session(State(state): State<AppState>, me: Me, Path(id): Path<Strin
 
 async fn end_others(State(state): State<AppState>, me: Me, ClientIp(ip): ClientIp) -> ApiResult<Json<Value>> {
     let ended = state.store.end_sessions(&me.person.id, Some(&me.session.id)).await?;
+    state.memory.forward_auth.sessions_ended();
     audit(&state, "sessions_ended", Some(&me.person.id), Some(&me.person.id), None, &ip, json!({ "count": ended }))
         .await;
     Ok(Json(json!({ "ended": ended })))

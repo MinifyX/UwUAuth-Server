@@ -13,6 +13,7 @@ import { t, useLanguage } from '../lib/i18n';
 import { go } from '../lib/route';
 import { toast } from '../lib/toast';
 import type { App, AppTemplate, GrantType } from '../lib/types';
+import { FORWARD_TEMPLATE, ForwardForm, ForwardMade } from './ForwardApp';
 
 const GENERIC = 'generic';
 
@@ -39,12 +40,18 @@ export function NewApp() {
     </button>
   );
 
-  if (made && template) return <Made app={made} template={template} />;
+  const forward = template?.key === FORWARD_TEMPLATE.key;
+  if (made && template)
+    return forward ? <ForwardMade app={made} /> : <Made app={made} template={template} />;
   if (template)
     return (
       <>
         {back}
-        <AppForm template={template} onMade={setMade} />
+        {forward ? (
+          <ForwardForm onMade={setMade} />
+        ) : (
+          <AppForm template={template} onMade={setMade} />
+        )}
       </>
     );
   return (
@@ -59,7 +66,8 @@ export function NewApp() {
       {!templates && <Loading />}
       {templates && (
         <div className="template-grid">
-          {[...templates]
+          {templates
+            .filter((option) => option.key !== FORWARD_TEMPLATE.key)
             .sort((a, b) => Number(a.key === GENERIC) - Number(b.key === GENERIC))
             .map((option) => (
               <button
@@ -73,6 +81,15 @@ export function NewApp() {
                 {option.key === GENERIC && <small>{t('Alles mit OpenID Connect')}</small>}
               </button>
             ))}
+          <button
+            type="button"
+            className="template-card"
+            onClick={() => setTemplate(FORWARD_TEMPLATE)}
+          >
+            <AppIcon name="Forward-Auth" size={44} />
+            <b>Forward-Auth</b>
+            <small>{t('Apps ohne eigene Anmeldung, hinter einem Reverse-Proxy')}</small>
+          </button>
         </div>
       )}
     </>

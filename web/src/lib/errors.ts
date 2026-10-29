@@ -127,6 +127,12 @@ export function errorText(error: unknown): string {
       return t('Mit diesen Mail-Einstellungen klappt es nicht: {reason}', {
         reason: error.message,
       });
+    case 'address':
+      return t('Mit dieser Adresse klappt es nicht: {reason}', { reason: error.message });
+    case 'cookie_domain':
+      return t(
+        'Die Cookie-Domain muss eine Domain wie example.com sein, in der auch die Adresse von UwUAuth liegt.',
+      );
     case 'csv':
       return t('Die CSV-Datei braucht in der ersten Zeile eine Spalte „username“.');
     case 'json':

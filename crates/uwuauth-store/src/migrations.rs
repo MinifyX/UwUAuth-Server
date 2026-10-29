@@ -13,6 +13,7 @@ const STEPS: &[&str] = &[
     include_str!("../migrations/sqlite/0003_apps.sql"),
     include_str!("../migrations/sqlite/0004_ldap.sql"),
     include_str!("../migrations/sqlite/0005_suite.sql"),
+    include_str!("../migrations/sqlite/0006_forward_auth.sql"),
 ];
 
 /// The schema this build writes.

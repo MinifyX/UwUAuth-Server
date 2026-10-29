@@ -140,6 +140,8 @@ pub struct Limits {
     /// Pairing, from anywhere: sixty tries per fifteen minutes. With 60 bits in a code, that is
     /// nothing to guess with, from however many addresses.
     pub pairing_all: Limiter<()>,
+    /// "Not allowed" events from forward auth, per address asking: twenty, then one a minute.
+    pub forward_auth: Limiter,
 }
 
 impl Default for Limits {
@@ -154,6 +156,7 @@ impl Default for Limits {
             oauth: Limiter::new(600, Duration::from_millis(100)),
             pairing: Limiter::new(10, Duration::from_secs(90)),
             pairing_all: Limiter::new(60, Duration::from_secs(15)),
+            forward_auth: Limiter::new(20, Duration::from_secs(60)),
         }
     }
 }
@@ -179,6 +182,7 @@ impl Limits {
             oauth: generous(),
             pairing: generous(),
             pairing_all: generous(),
+            forward_auth: generous(),
         }
     }
 }
