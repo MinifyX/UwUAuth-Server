@@ -5,14 +5,14 @@
 
 # The preparation runs on the machine that builds, whatever the image is for: it only copies and
 # sets modes, so nothing has to be emulated. Pinned by digest, like the runtime below.
-FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS prep
+FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS prep
 ARG TARGETARCH
 COPY dist/${TARGETARCH}/uwuauth-server /usr/local/bin/uwuauth-server
 RUN chmod 755 /usr/local/bin/uwuauth-server \
  && install -d -o 10001 -g 10001 /data
 
 # Distroless, pinned by digest: see docker/Dockerfile for why.
-FROM gcr.io/distroless/cc-debian13@sha256:4594d59540d1948417f6ca2829ddd9294493a7c68b7528f4dd459de7f203a750
+FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
 COPY --from=prep /usr/local/bin/ /usr/local/bin/
 COPY --from=prep --chown=10001:10001 /data /data
 USER 10001:10001
