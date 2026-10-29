@@ -282,7 +282,7 @@ Abtippen von Client-IDs, Secrets und Redirect-URIs ab.
 - [ ] **UwUMail Server** — kann schon OIDC-Anmeldung und LDAP. Dazu kommen die Kopplung, SCIM
       (Postfach anlegen, sperren, Alias aus E-Mail-Adressen) und die Frage, ob Mail-Apps sich mit
       App-Passwörtern aus UwUAuth anmelden oder weiter über UwUMails eigenes OAuth
-- [ ] **UwULock Server** — Zero-Knowledge bleibt: SSO bestätigt nur, wer jemand ist; der Tresor
+- [x] **UwULock Server** (0.8, Kopplung, SCIM, SSO) — Zero-Knowledge bleibt: SSO bestätigt nur, wer jemand ist; der Tresor
       wird weiter mit dem Master-Passwort entschlüsselt (wie Bitwardens „SSO mit
       Master-Passwort“), später vielleicht mit vertrauenswürdigen Geräten. Einladungen kommen per
       SCIM statt per Mail

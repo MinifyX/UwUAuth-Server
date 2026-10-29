@@ -158,14 +158,41 @@ impl Endpoint {
 
     /// The id of the one resource `filter` finds.
     async fn find(&self, resource: &str, attribute: &str, value: &str) -> Result<Option<String>, Unreachable> {
+        Ok(self
+            .find_resource(resource, attribute, value)
+            .await?
+            .and_then(|found| found["id"].as_str().map(str::to_string)))
+    }
+
+    /// The one resource `filter` finds, as the app sent it.
+    async fn find_resource(&self, resource: &str, attribute: &str, value: &str) -> Result<Option<Value>, Unreachable> {
         let filter = format!("{attribute} eq {}", Value::String(value.to_string()));
         let query: String =
             url::form_urlencoded::Serializer::new(String::new()).append_pair("filter", &filter).finish();
-        let (status, body) = self.send(reqwest::Method::GET, &format!("/{resource}?{query}"), None).await?;
+        let (status, mut body) = self.send(reqwest::Method::GET, &format!("/{resource}?{query}"), None).await?;
         if status != 200 {
             return Ok(None);
         }
-        Ok(body["Resources"].get(0).and_then(|found| found["id"].as_str()).map(str::to_string))
+        Ok(body["Resources"].get_mut(0).map(Value::take).filter(|found| found["id"].is_string()))
+    }
+
+    /// The app's id for a person it already knows: by our id first (the `externalId` it keeps),
+    /// by `userName` only when that one isn't someone else's — an address alone never ties a
+    /// person here to an account there that another person of ours already has.
+    async fn find_user(&self, doc: &UserDoc) -> Result<Option<String>, Unreachable> {
+        let id = |found: Value| found["id"].as_str().map(str::to_string);
+        if let Some(found) = self.find_resource("Users", "externalId", &doc.person).await?
+            && found["externalId"].as_str() == Some(doc.person.as_str())
+        {
+            return Ok(id(found));
+        }
+        Ok(self.find_resource("Users", "userName", &doc.user_name).await?.and_then(|found| {
+            match found["externalId"].as_str() {
+                None | Some("") => id(found),
+                Some(theirs) if theirs == doc.person => id(found),
+                Some(_) => None,
+            }
+        }))
     }
 }
 
@@ -478,8 +505,8 @@ async fn create_user(endpoint: &Endpoint, doc: &UserDoc, what: &str, pushed: &mu
                 Ok(None)
             }
         },
-        // The app knows them already: found, and brought up to date.
-        409 => match endpoint.find("Users", "userName", &doc.user_name).await? {
+        // The app knows them already: found (see `find_user`), and brought up to date.
+        409 => match endpoint.find_user(doc).await? {
             Some(id) => {
                 let object =
                     ScimObject { kind: "user".into(), local_id: doc.person.clone(), remote_id: id, sent: "{}".into() };

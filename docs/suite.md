@@ -166,8 +166,10 @@ To `scim.baseUrl`, with `Authorization: Bearer <scimToken>` and `application/sci
 }
 ```
 
-- New: `POST /Users`. A `409` means the app knows them already: UwUAuth finds them with
-  `GET /Users?filter=userName eq "mia@example.com"` and takes that id over.
+- New: `POST /Users`. A `409` means the app knows them already: UwUAuth finds them by its own id
+  first (`GET /Users?filter=externalId eq "…"`), then by
+  `GET /Users?filter=userName eq "mia@example.com"`, and takes that id over — but never one whose
+  `externalId` names another person of UwUAuth's. Such a person is reported as an error instead.
 - Changed: `PATCH /Users/{id}` with `replace` operations, one per changed field, of `active`,
   `displayName` and `externalId` (and `userName` when the app keys people by user name). An
   address used as `userName` is never changed: the person changes it in the app.

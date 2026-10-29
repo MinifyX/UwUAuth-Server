@@ -79,7 +79,7 @@ While 0.4 is a beta, the newest `install.sh` is the beta's (`latest` still point
 which knows neither `--admin` nor `--ldap`):
 
 ```bash
-curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/download/v0.5.0-beta.1/install.sh
+curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/download/v0.5.0-beta.2/install.sh
 sudo bash install.sh --version beta
 ```
 
