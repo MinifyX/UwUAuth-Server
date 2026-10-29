@@ -3,6 +3,15 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.2
+
+**SCIM finds a person an app already knows by UwUAuth's id first.** When an app answers `409`
+to a new person, UwUAuth now looks them up by `externalId` before `userName`, and never takes
+over an account there whose `externalId` belongs to someone else — that person is reported as
+an error instead. Before, a person whose address matched someone else's account in the app
+could be tied to it, and changing an address could leave a person unmanaged there, so that
+disabling them never reached the app.
+
 ## 0.5.0-beta.1
 
 **Forward auth: UwUAuth guards apps that have no sign-in of their own.** Caddy, Traefik, nginx

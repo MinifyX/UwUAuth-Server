@@ -286,7 +286,10 @@ async fn fake_scim() -> (String, Shared) {
         let store = if kind == "Users" { &mut fake.users } else { &mut fake.groups };
         match (method.as_str(), id) {
             ("POST", None) => {
-                if store.values().any(|known| known[key] == body[key]) {
+                let same_id = |known: &Value| {
+                    kind == "Users" && body["externalId"].is_string() && known["externalId"] == body["externalId"]
+                };
+                if store.values().any(|known| known[key] == body[key] || same_id(known)) {
                     return (StatusCode::CONFLICT, Json(json!({ "status": "409", "scimType": "uniqueness" })));
                 }
                 let id = uuid::Uuid::new_v4().to_string();
@@ -297,8 +300,9 @@ async fn fake_scim() -> (String, Shared) {
             }
             ("GET", None) => {
                 let filter = query.get("filter").cloned().unwrap_or_default();
-                let wanted: Value = serde_json::from_str(filter.split_once(" eq ").unwrap().1).unwrap();
-                let found: Vec<Value> = store.values().filter(|known| known[key] == wanted).cloned().collect();
+                let (attribute, wanted) = filter.split_once(" eq ").unwrap();
+                let wanted: Value = serde_json::from_str(wanted).unwrap();
+                let found: Vec<Value> = store.values().filter(|known| known[attribute] == wanted).cloned().collect();
                 (StatusCode::OK, Json(json!({ "totalResults": found.len(), "Resources": found })))
             }
             ("PATCH", Some(id)) => match store.get_mut(&id) {
@@ -428,6 +432,47 @@ async fn people_who_may_use_a_paired_app_are_pushed_over_scim() {
     assert!(app["scim"]["error"].is_string());
     let failed = admin.json("/uwu/v1/events?kind=app_scim_failed").await;
     assert_eq!(failed.as_array().unwrap().len(), 1, "{failed}");
+}
+
+#[tokio::test]
+async fn a_person_the_app_knows_is_found_by_our_id_before_their_address() {
+    let server = TestServer::new().await;
+    let store = &server.state.store;
+    let admin = server.person("admin", true).await;
+    let (url, shared) = fake_scim().await;
+    let family = store.create_group(GroupFields { name: "family".into(), ..GroupFields::default() }).await.unwrap();
+    let ben = person(&server, "ben", Some("ben@example.com")).await;
+    let otto = person(&server, "otto", Some("otto@example.com")).await;
+    for id in [&ben, &otto] {
+        store.add_member(&family.id, id).await.unwrap();
+    }
+    {
+        let users = &mut shared.0.lock().users;
+        // Ben signed in there before, under his old address.
+        users
+            .insert("ben-there".into(), json!({ "id": "ben-there", "userName": "old@example.com", "externalId": ben }));
+        // Otto's address belongs there to someone else of ours.
+        users.insert(
+            "taken".into(),
+            json!({ "id": "taken", "userName": "otto@example.com", "externalId": "someone-else" }),
+        );
+    }
+
+    let made = admin.ok("POST", "/uwu/v1/pairing-codes", json!({ "allowedGroups": ["family"] })).await;
+    let (status, paired) =
+        pair_request(&server, json!({ "code": made["code"], "app": suite_app(&url, Some(&format!("{url}/scim/v2"))) }))
+            .await;
+    assert_eq!(status, StatusCode::OK, "{paired}");
+    let pushed = scim::push(&server.state, paired["appId"].as_str().unwrap()).await.unwrap();
+
+    assert_eq!(pushed.errors.len(), 1, "otto is refused, not tied to someone else: {pushed:?}");
+    let (users, _, _) = look(&shared);
+    assert_eq!(users.len(), 2, "nobody made twice");
+    let taken = users.iter().find(|user| user["id"] == "taken").unwrap();
+    assert_eq!(taken["externalId"], "someone-else");
+    assert!(taken.get("displayName").is_none(), "left alone");
+    let ben_there = users.iter().find(|user| user["id"] == "ben-there").unwrap();
+    assert_eq!(ben_there["displayName"], "BEN", "found by his id and brought up to date");
 }
 
 #[tokio::test]
