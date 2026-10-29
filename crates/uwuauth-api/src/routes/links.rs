@@ -351,6 +351,7 @@ async fn set_up(
     };
     // Whoever had a session before does not keep it: the account is somebody else's to use now.
     state.store.end_sessions(&person.id, None).await?;
+    state.memory.forward_auth.sessions_ended();
     let kind = if purpose == Purpose::Setup { "account_set_up" } else { "password_reset" };
     audit(state, kind, None, Some(&person.id), Some(&link.id), &ip, json!({ "method": method.amr() })).await;
     let person = state.store.person(&person.id).await?.ok_or_else(ApiError::not_found)?;

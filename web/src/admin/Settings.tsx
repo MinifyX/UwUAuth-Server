@@ -313,6 +313,21 @@ export function AdminSettings({ me }: { me: Me }) {
             onChange={(e) => set({ invitationDays: number(e.target.value, 7) })}
           />
         </Row>
+        <label className="field">
+          <span>{t('Cookie-Domain für Forward-Auth')}</span>
+          <input
+            value={draft.cookieDomain}
+            onChange={(e) => set({ cookieDomain: e.target.value })}
+            placeholder="example.com"
+            autoCapitalize="none"
+            spellCheck={false}
+          />
+          <small className="field-hint">
+            {t(
+              'Leer lassen, solange alle Apps hinter Forward-Auth auf dem Host von UwUAuth liegen. Mit einer Domain wie example.com gilt die Anmeldung für Forward-Auth auf allen Hosts darunter – trag sie nur ein, wenn du allen diesen Hosts traust.',
+            )}
+          </small>
+        </label>
         <Row
           label={t('Mail bei neuem Gerät')}
           description={t('Wenn sich jemand auf einem Gerät anmeldet, das er noch nie benutzt hat.')}

@@ -1,0 +1,14 @@
+# Caddy in front of an app without its own sign-in (whoami, which echoes the request back):
+# every request first asks UwUAuth, and the app sees who it is from the Remote-* headers.
+{
+	auto_https off
+	admin off
+}
+
+http://whoami.example.test, http://other.example.test {
+	forward_auth uwuauth:8443 {
+		uri /uwu/v1/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+	}
+	reverse_proxy whoami:80
+}

@@ -3,6 +3,25 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.1
+
+**Forward auth: UwUAuth guards apps that have no sign-in of their own.** Caddy, Traefik, nginx
+and Nginx Proxy Manager ask UwUAuth before every request; people sign in once and the same
+groups, time windows and second-factor rules as for OpenID Connect apply. Setup for each proxy:
+[docs/forward-auth.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/forward-auth.md).
+
+- *Apps → New app → Forward auth*: one or more protected addresses (`host[:port][/path]`), who
+  may in and whether a second factor is needed. The most specific address wins; a host no app
+  has is turned away.
+- `/uwu/v1/forward-auth` (Caddy, Traefik, Nginx Proxy Manager) and `/uwu/v1/forward-auth/nginx`
+  (`auth_request`) answer 200 with `Remote-User`, `Remote-Groups`, `Remote-Email` and
+  `Remote-Name`, send people who are not signed in to the login and back, and answer 403 with an
+  event in the log when someone may not in.
+- *Settings → Cookie domain* lets the forward-auth cookie reach every host under a domain; off
+  by default. Signing out, ending sessions and password changes take effect at once.
+- Templates for **Synology DSM** and **Technitium DNS**.
+- The interop tests run the whole flow against a real Caddy.
+
 ## 0.4.0-beta.1
 
 **Pairing with the UwUSuite.** UwUMail, UwULock and the suite's other servers connect with a

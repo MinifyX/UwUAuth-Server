@@ -2,14 +2,15 @@
 # them up and drives a browser through their "Sign in with UwUAuth" buttons.
 #
 # UwUAuth runs over plain HTTP here (http://uwuauth:8443): the apps and the browser reach it by
-# that name inside the network, and nothing leaves it.
+# that name inside the network, and nothing leaves it. For forward auth it goes by
+# auth.example.test instead, so that its cookie can cover the apps on *.example.test.
 name: uwuauth-interop
 
 services:
   uwuauth:
     image: uwuauth-server:interop
     environment:
-      UWUAUTH_PUBLIC: http://uwuauth:8443
+      UWUAUTH_PUBLIC: ${UWUAUTH_PUBLIC:-http://uwuauth:8443}
       UWUAUTH_TLS: "off"
       UWUAUTH_UPDATE_CHECK: "off"
       UWUAUTH_LDAP_LISTEN: 0.0.0.0:10389
@@ -17,6 +18,9 @@ services:
       UWUAUTH_LDAP_BASE_DN: dc=example,dc=com
     ports:
       - "127.0.0.1:${UWUAUTH_PORT:-28491}:8443"
+    networks:
+      default:
+        aliases: [auth.example.test]
 
   forgejo:
     image: codeberg.org/forgejo/forgejo:16
@@ -61,3 +65,16 @@ services:
       OVERWRITEPROTOCOL: http
       OVERWRITECLIURL: http://nextcloud
     profiles: [nextcloud]
+
+  caddy:
+    image: caddy:2.11.2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+        aliases: [whoami.example.test, other.example.test]
+    profiles: [forward-auth]
+
+  whoami:
+    image: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
+    profiles: [forward-auth]

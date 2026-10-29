@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Real apps against a UwUAuth binary, in Docker:
 #
-#   scripts/interop/run.sh <path to uwuauth-server (linux/amd64, with the web app)> [ldap|oidc|all]
+#   scripts/interop/run.sh <path to uwuauth-server (linux/amd64, with the web app)> [ldap|oidc|forward-auth|all]
 #
 # ldap: SSSD on a Linux machine looks people up and signs one in over LDAP.
 # oidc: Grafana and Forgejo sign the same person in with OpenID Connect, in a real browser.
 # nextcloud: Nextcloud finds people over LDAP, and signs one in with OpenID Connect (user_oidc,
 #            from Nextcloud's app store: needs the internet). Slow; not part of `all`.
+# forward-auth: Caddy guards an app with forward auth; curl goes through it like a browser.
+#            UwUAuth is auth.example.test then, so that its cookie covers *.example.test.
 set -euo pipefail
 binary="$(realpath "${1:?the uwuauth-server binary}")"
 cd "$(dirname "$0")"
@@ -17,14 +19,16 @@ port="${UWUAUTH_PORT:-28491}"
 export UWUAUTH_PORT="$port"
 jar="$work/jar"
 public=http://uwuauth:8443
+if [ "$what" = forward-auth ]; then public=http://auth.example.test:8443; fi
+export UWUAUTH_PUBLIC="$public"
 local="http://127.0.0.1:$port"
 
 cleanup() {
   status=$?
   if [ $status -ne 0 ]; then
-    docker compose --profile oidc --profile nextcloud logs --no-color --tail 60 >&2 || true
+    docker compose --profile oidc --profile nextcloud --profile forward-auth logs --no-color --tail 60 >&2 || true
   fi
-  docker compose --profile oidc --profile nextcloud down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose --profile oidc --profile nextcloud --profile forward-auth down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -128,6 +132,17 @@ if [ "$what" = nextcloud ]; then
   occ config:system:set debug --value true --type boolean >/dev/null
   docker run --rm --ipc=host --network uwuauth-interop_default -v "$PWD:/interop:ro" \
     mcr.microsoft.com/playwright:v1.63.0-noble node /interop/nextcloud.mjs "$public" nyu "correct horse battery"
+fi
+
+if [ "$what" = forward-auth ]; then
+  step "Caddy with forward auth"
+  api "$local/uwu/v1/settings" | python3 -c 'import json,sys; s=json.load(sys.stdin); s["cookieDomain"]="example.test"; print(json.dumps(s))' >"$work/settings"
+  api -X PUT -d @"$work/settings" "$local/uwu/v1/settings" >/dev/null
+  api -d '{"name":"whoami","template":"forward-auth","forwardAuth":["whoami.example.test"]}' "$local/uwu/v1/apps" >/dev/null
+  docker compose --profile forward-auth up -d caddy whoami >/dev/null
+  docker run --rm --network uwuauth-interop_default -v "$PWD/forward-auth.sh:/forward-auth.sh:ro" \
+    --entrypoint /bin/sh curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40 \
+    /forward-auth.sh "$public" nyu "correct horse battery"
 fi
 
 step "all good"

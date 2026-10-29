@@ -80,9 +80,11 @@ pub fn unb64(text: &str) -> Option<Vec<u8>> {
 
 // ── Sealing ───────────────────────────────────────────────
 
-/// Seals and opens secrets with the server's key.
+/// Seals and opens secrets with the server's key, and signs what only needs to be recognised
+/// again (with a key of its own, derived from the server's).
 pub struct Sealer {
     key: LessSafeKey,
+    mac: ring::hmac::Key,
 }
 
 impl Sealer {
@@ -107,7 +109,21 @@ impl Sealer {
     }
 
     pub fn from_key(key: &[u8]) -> Self {
-        Sealer { key: LessSafeKey::new(UnboundKey::new(&AES_256_GCM, key).expect("a 32-byte key")) }
+        let mac = sha256(&[b"uwuauth mac\0".as_slice(), key].concat());
+        Sealer {
+            key: LessSafeKey::new(UnboundKey::new(&AES_256_GCM, key).expect("a 32-byte key")),
+            mac: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &mac),
+        }
+    }
+
+    /// An HMAC-SHA256 of `data`.
+    pub fn sign(&self, data: &[u8]) -> Vec<u8> {
+        ring::hmac::sign(&self.mac, data).as_ref().to_vec()
+    }
+
+    /// Whether `tag` is [`Sealer::sign`] of `data`, compared in constant time.
+    pub fn verify(&self, data: &[u8], tag: &[u8]) -> bool {
+        ring::hmac::verify(&self.mac, data, tag).is_ok()
     }
 
     /// `v1.` and base64 of a random nonce and the sealed bytes.

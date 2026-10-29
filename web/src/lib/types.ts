@@ -187,6 +187,8 @@ export type Settings = {
   newDeviceMail: boolean;
   lockoutAttempts: number;
   invitationDays: number;
+  /** Where the forward-auth cookie goes, e.g. example.com; empty: only this server's host. */
+  cookieDomain: string;
 };
 
 export type Overview = {
@@ -281,6 +283,8 @@ export type App = {
   disabled: boolean;
   created: string;
   updated: string;
+  /** For a forward-auth app: the hosts (and paths) the proxy guards with it. */
+  forwardAuth: string[];
   /** On the detail and right after making it. */
   issuer?: string;
   /** What to set on the app's side, from its template. */

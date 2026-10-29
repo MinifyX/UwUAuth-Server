@@ -36,6 +36,11 @@ impl<V> Expiring<V> {
         true
     }
 
+    /// Forget every value whose key `matches`.
+    pub fn forget(&self, matches: impl Fn(&str) -> bool) {
+        self.entries.lock().retain(|key, _| !matches(key));
+    }
+
     /// The value under `key`, once: whatever happens next, it is gone.
     pub fn take(&self, key: &str) -> Option<V> {
         let (value, at) = self.entries.lock().remove(key)?;
@@ -79,6 +84,8 @@ pub struct Memory {
     pub totp_setup: Expiring<Vec<u8>>,
     /// Sign-ins to apps in progress: codes, consent, devices, sign-outs.
     pub oidc: crate::oidc::Pending,
+    /// Forward auth: answers for a few seconds, the apps, and what was noted.
+    pub forward_auth: crate::forward_auth::Cache,
 }
 
 impl Default for Memory {
@@ -88,6 +95,7 @@ impl Default for Memory {
             pending: Expiring::new(Duration::from_secs(5 * 60)),
             totp_setup: Expiring::new(Duration::from_secs(15 * 60)),
             oidc: crate::oidc::Pending::default(),
+            forward_auth: crate::forward_auth::Cache::default(),
         }
     }
 }

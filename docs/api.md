@@ -87,6 +87,16 @@ that is left out goes, with its values.
 
 `GET /uwu/v1/settings`, `PUT /uwu/v1/settings` with the whole object (the mail password only as
 `smtpPassword`, when it changes); `POST /uwu/v1/settings/test-mail` for a signed-in admin.
+`cookieDomain` (empty, or a domain UwUAuth's own host lies in) lets the
+[forward-auth](forward-auth.md) cookie reach other hosts below it.
+
+## Forward auth
+
+`GET /uwu/v1/forward-auth` and `GET /uwu/v1/forward-auth/nginx` are for the reverse proxy, not for
+API clients: 200 with `Remote-User`, `Remote-Groups`, `Remote-Email`, `Remote-Name`; a redirect
+(or 401 for nginx) to sign in; 403 otherwise. An app for them is made like any other, with
+`"template": "forward-auth"` and `"forwardAuth": ["wiki.example.com", "example.com/admin"]` —
+no redirect addresses, no secret, no roles. See [Forward auth](forward-auth.md).
 
 ## Events, log, backups
 

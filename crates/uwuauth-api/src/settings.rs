@@ -53,6 +53,10 @@ pub struct Settings {
     pub lockout_attempts: u32,
     /// How long an invitation works.
     pub invitation_days: u32,
+    /// The domain the forward-auth cookie is set for (`example.com`: every host below it), so a
+    /// reverse proxy in front of other apps can ask who is signed in. Empty: no shared cookie,
+    /// forward auth only for apps on this server's own host.
+    pub cookie_domain: String,
 }
 
 impl Default for Settings {
@@ -71,6 +75,7 @@ impl Default for Settings {
             new_device_mail: true,
             lockout_attempts: 10,
             invitation_days: 7,
+            cookie_domain: String::new(),
         }
     }
 }
@@ -164,6 +169,8 @@ async fn change(
     if !(3..=100).contains(&next.lockout_attempts) || !(1..=90).contains(&next.invitation_days) {
         return Err(ApiError::field("lockoutAttempts", "range", "That is too few or too many."));
     }
+    next.cookie_domain = cookie_domain(&next.cookie_domain, &state.config.public)
+        .map_err(|message| ApiError::field("cookieDomain", "cookie_domain", message))?;
     if let Some(smtp) = next.smtp.as_mut() {
         if !smtp.is_set() {
             next.smtp = None;
@@ -184,6 +191,31 @@ async fn change(
     *state.settings.write() = next.clone();
     audit(&state, "settings_changed", Some(&admin.actor_id()), None, None, &ip, json!({})).await;
     Ok(Json(next.public()))
+}
+
+/// The cookie domain as it is kept: lower case, without a leading dot, and one that this
+/// server's own host is in (a browser takes no cookie for a domain the page is not in).
+pub(crate) fn cookie_domain(typed: &str, public: &str) -> Result<String, String> {
+    let domain = typed.trim().trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+    if domain.is_empty() {
+        return Ok(domain);
+    }
+    let label = |label: &str| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    if domain.len() > 253 || !domain.contains('.') || !domain.split('.').all(label) {
+        return Err(format!("{domain} is not a domain like example.com."));
+    }
+    let host = url::Url::parse(public).ok().and_then(|url| url.host_str().map(str::to_ascii_lowercase));
+    let covers = host.as_deref().is_some_and(|host| crate::forward_auth::within(host, &domain));
+    if !covers {
+        return Err(format!("This server's own address has to be in {domain}."));
+    }
+    Ok(domain)
 }
 
 async fn test_mail(State(state): State<AppState>, admin: AdminOnly) -> ApiResult<Json<Value>> {
