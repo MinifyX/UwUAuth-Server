@@ -60,28 +60,10 @@ impl Access {
         if me.admin {
             return Ok(Access::Admin);
         }
-        let membership = state.store.membership().await?;
-        let people = state.store.people().await?;
-        let everybody: Vec<String> = people.iter().map(|person| person.id.clone()).collect();
-        let managed = state.store.people_managed_by(&me.person.id, &membership, &everybody).await?;
-        if managed.is_empty() && !state.store.managers().await?.contains(&me.person.id) {
+        if !state.store.managers().await?.contains(&me.person.id) {
             return Err(ApiError::forbidden("Only admins and managers can do this."));
         }
-        // A manager looks after accounts that are looked after: a kid's, not an admin's, not
-        // another manager's — whoever ended up in a group they manage.
-        let admins = membership.people_in(ADMINS_ID, &[]);
-        let managers = state.store.managers().await?;
-        let reachable = people
-            .iter()
-            .filter(|person| {
-                managed.contains(&person.id)
-                    && person.managed
-                    && !admins.contains(&person.id)
-                    && !managers.contains(&person.id)
-            })
-            .map(|person| person.id.clone())
-            .collect();
-        Ok(Access::Manager(reachable))
+        Ok(Access::Manager(reachable(state, &me.person.id).await?))
     }
 
     fn admin(&self) -> ApiResult<()> {
@@ -97,6 +79,31 @@ impl Access {
             Access::Manager(people) => people.contains(person),
         }
     }
+}
+
+/// The accounts `manager` looks after and may act on: looked-after accounts in their care — a
+/// kid's, not an admin's, not another manager's, never their own. Empty for somebody who looks
+/// after nobody.
+pub(crate) async fn reachable(state: &AppState, manager: &str) -> ApiResult<BTreeSet<String>> {
+    let membership = state.store.membership().await?;
+    let people = state.store.people().await?;
+    let everybody: Vec<String> = people.iter().map(|person| person.id.clone()).collect();
+    let managed = state.store.people_managed_by(manager, &membership, &everybody).await?;
+    if managed.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let admins = membership.people_in(ADMINS_ID, &[]);
+    let managers = state.store.managers().await?;
+    Ok(people
+        .iter()
+        .filter(|person| {
+            managed.contains(&person.id)
+                && person.managed
+                && !admins.contains(&person.id)
+                && !managers.contains(&person.id)
+        })
+        .map(|person| person.id.clone())
+        .collect())
 }
 
 /// The person `id`, if the one asking may see them; a manager gets "not found" for anybody else.

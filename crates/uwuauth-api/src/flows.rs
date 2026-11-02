@@ -653,6 +653,49 @@ async fn a_manager_reaches_managed_accounts_only_and_an_owner_only_people() {
 }
 
 #[tokio::test]
+async fn an_owner_brings_in_only_themselves_and_whom_they_look_after() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let mama = server.person("mama", false).await;
+    let papa = server.person("papa", false).await;
+    let neighbour = server.person("nachbar", false).await;
+    let id_of = |value: Value| value["id"].as_str().unwrap().to_string();
+    let mama_id = id_of(mama.json("/uwu/v1/me").await);
+    let papa_id = id_of(papa.json("/uwu/v1/me").await);
+    let neighbour_id = id_of(neighbour.json("/uwu/v1/me").await);
+    let kids = id_of(admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Kinder" })).await);
+    let others = id_of(admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Nachbarskinder" })).await);
+    admin
+        .ok("PUT", &format!("/uwu/v1/groups/{kids}/members"), json!({ "people": [], "owners": [mama_id.clone()] }))
+        .await;
+    admin.ok("PUT", &format!("/uwu/v1/people/{mama_id}/manages"), json!({ "people": [], "groups": [kids] })).await;
+    admin.ok("PUT", &format!("/uwu/v1/people/{papa_id}/manages"), json!({ "people": [], "groups": [others] })).await;
+    let mia = id_of(mama.ok("POST", "/uwu/v1/people", json!({ "username": "mia", "displayName": "Mia" })).await);
+    let ben = id_of(papa.ok("POST", "/uwu/v1/people", json!({ "username": "ben", "displayName": "Ben" })).await);
+    let members = |people: Value| json!({ "people": people });
+    let path = format!("/uwu/v1/groups/{kids}/members");
+
+    // Somebody else's kid, or a grown-up, would come into mama's care: refused, nothing changes.
+    for stranger in [&ben, &neighbour_id, &papa_id] {
+        let refused = mama.request("PUT", &path, Some(members(json!([mia, stranger])))).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{stranger}");
+    }
+    assert!(admin.json(&format!("/uwu/v1/groups/{kids}")).await["people"].as_array().unwrap().is_empty());
+    assert_eq!(papa.get(&format!("/uwu/v1/people/{ben}")).await.status(), StatusCode::OK);
+    assert_eq!(mama.get(&format!("/uwu/v1/people/{ben}")).await.status(), StatusCode::NOT_FOUND);
+
+    // Her own kid and herself are fine.
+    mama.ok("PUT", &path, members(json!([mia, mama_id]))).await;
+    // Whom an admin put in stays when she saves, and she may take them out.
+    admin.ok("PUT", &path, members(json!([mia, mama_id, neighbour_id]))).await;
+    mama.ok("PUT", &path, members(json!([mia, mama_id, neighbour_id]))).await;
+    mama.ok("PUT", &path, members(json!([mia]))).await;
+    let refused = mama.request("PUT", &path, Some(members(json!([mia, neighbour_id])))).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN, "once out, only an admin brings them back");
+    assert_eq!(admin.json(&format!("/uwu/v1/groups/{kids}")).await["people"], json!([mia]));
+}
+
+#[tokio::test]
 async fn a_group_inside_admins_is_the_admins_to_change() {
     let server = TestServer::new().await;
     let admin = server.person("admin", true).await;
