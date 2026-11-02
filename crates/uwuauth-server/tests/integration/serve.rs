@@ -113,6 +113,10 @@ async fn files_that_do_not_go_together_stop_the_start() {
     assert!(error.contains("do not go together"), "{error}");
     let error = uwuauth_server::tls::from_files(&dir.path().join("missing.pem"), &key).unwrap_err();
     assert!(error.contains("missing.pem"), "{error}");
+    let error = uwuauth_server::tls::from_files(&cert, &cert).unwrap_err();
+    assert!(error.contains("holds no private key"), "{error}");
+    let error = uwuauth_server::tls::from_files(&key, &key).unwrap_err();
+    assert!(error.contains("holds no certificate"), "{error}");
 }
 
 fn roots(extra: &[rustls::pki_types::CertificateDer<'static>]) -> rustls::ClientConfig {
