@@ -262,6 +262,27 @@ impl Store {
         .await
     }
 
+    /// The avatars of `ids` that have one, in a few queries rather than one each: for LDAP
+    /// searches that ask for photos of a whole page of people.
+    pub async fn avatars_of(&self, ids: Vec<String>) -> Result<std::collections::HashMap<String, Vec<u8>>> {
+        self.sqlite_read(move |conn| {
+            let mut found = std::collections::HashMap::new();
+            for chunk in ids.chunks(500) {
+                let marks = vec!["?"; chunk.len()].join(",");
+                let mut statement =
+                    conn.prepare(&format!("SELECT person_id, jpeg FROM avatars WHERE person_id IN ({marks})"))?;
+                let rows =
+                    statement.query_map(rusqlite::params_from_iter(chunk), |row| Ok((row.get(0)?, row.get(1)?)))?;
+                for row in rows {
+                    let (id, jpeg): (String, Vec<u8>) = row?;
+                    found.insert(id, jpeg);
+                }
+            }
+            Ok(found)
+        })
+        .await
+    }
+
     /// Which people have an avatar, for lists.
     pub async fn avatar_ids(&self) -> Result<Vec<String>> {
         self.sqlite_read(|conn| {

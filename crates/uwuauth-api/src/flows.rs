@@ -694,6 +694,29 @@ async fn powerful_admin_actions_want_a_recent_sign_in() {
     let groups =
         admin.request("PUT", &format!("/uwu/v1/people/{other_id}/groups"), Some(json!({ "groups": [] }))).await;
     assert_eq!(json(groups).await["error"], "reauth");
+    // What a reset goes by: the address, whether it counts, the user name.
+    server
+        .state
+        .store
+        .update_person(&other_id, |person| person.email = Some("other@example.com".into()))
+        .await
+        .unwrap();
+    let path = format!("/uwu/v1/people/{other_id}");
+    for change in [
+        json!({ "email": "taken-over@example.com" }),
+        json!({ "email": "" }),
+        json!({ "emailVerified": true }),
+        json!({ "username": "someone" }),
+    ] {
+        let refused = admin.request("PATCH", &path, Some(change.clone())).await;
+        assert_eq!(json(refused).await["error"], "reauth", "{change}");
+    }
+    admin
+        .ok("PATCH", &path, json!({ "displayName": "Other One", "username": "other", "email": "other@example.com" }))
+        .await;
+    let other_now = admin.json(&path).await;
+    assert_eq!(other_now["displayName"], "Other One");
+    assert_eq!(other_now["username"], "other");
 }
 
 #[tokio::test]

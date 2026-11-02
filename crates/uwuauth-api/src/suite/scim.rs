@@ -19,7 +19,10 @@
 //! One task pushes, in the background: when the directory changes, when an app is paired or
 //! changed, when an admin asks, and every five minutes anyway (accounts run out without anybody
 //! changing anything). Suite apps are the admin's own, often in the same home network, so
-//! private addresses are fine; redirects are never followed.
+//! private addresses are fine; redirects are never followed. The SCIM address has to be `https`
+//! on one of the app's own hosts (its redirect, logout, launch or forward-auth addresses), or plain
+//! `http` to this machine when the app lives here too; that is checked when it is set and again
+//! before every push, so the token only ever goes to the app it belongs to.
 
 use super::scim_view;
 use crate::errors::{ApiError, ApiResult};
@@ -277,7 +280,7 @@ pub async fn push(state: &AppState, app_id: &str) -> ApiResult<Pushed> {
         return Ok(Pushed::default());
     }
     let mut pushed = Pushed::default();
-    let outcome = match open(state, &target) {
+    let outcome = match open(state, &app, &target) {
         Ok(endpoint) => run(state, &app, &target, &endpoint, &mut pushed).await,
         Err(error) => Err(Unreachable(error)),
     };
@@ -315,7 +318,46 @@ pub async fn push(state: &AppState, app_id: &str) -> ApiResult<Pushed> {
     Ok(pushed)
 }
 
-fn open(state: &AppState, target: &ScimTarget) -> Result<Endpoint, String> {
+/// The hosts an app was given: where people are sent back to, where it is launched, where it
+/// takes logouts and what forward auth guards for it.
+fn hosts_of(app: &uwuauth_store::App) -> BTreeSet<String> {
+    let uris = app
+        .redirect_uris
+        .iter()
+        .chain(&app.post_logout_redirect_uris)
+        .chain(&app.backchannel_logout_uri)
+        .chain(&app.launch_url)
+        .cloned()
+        .chain(app.forward_auth.iter().map(|guarded| format!("https://{guarded}")));
+    uris.filter_map(|uri| url::Url::parse(&uri).ok()?.host_str().map(str::to_ascii_lowercase)).collect()
+}
+
+/// Whether SCIM may go to `base_url` for this app: `https` on one of its own hosts, or plain
+/// `http` when that host is this machine.
+fn pinned(base_url: &str, app: &uwuauth_store::App) -> Result<(), String> {
+    let hosts = hosts_of(app);
+    let ok = url::Url::parse(base_url).is_ok_and(|url| {
+        url.host_str().is_some_and(|host| hosts.contains(&host.to_ascii_lowercase()))
+            && match url.scheme() {
+                "https" => true,
+                "http" => super::loopback(&url),
+                _ => false,
+            }
+    });
+    if ok {
+        Ok(())
+    } else if hosts.is_empty() {
+        Err("the app has no address of its own yet, so SCIM has nowhere it may go".into())
+    } else {
+        Err(format!(
+            "the SCIM address has to be https on one of the app's own hosts ({})",
+            hosts.into_iter().collect::<Vec<_>>().join(", ")
+        ))
+    }
+}
+
+fn open(state: &AppState, app: &uwuauth_store::App, target: &ScimTarget) -> Result<Endpoint, String> {
+    pinned(&target.base_url, app)?;
     let token = state
         .sealer
         .open(&target.token)
@@ -657,6 +699,11 @@ pub(crate) async fn set_up(
             "uri",
             "The SCIM address is an http(s) address without anything after it.",
         ));
+    }
+    if let Err(error) = pinned(&base_url, &app) {
+        let mut letters = error.chars();
+        let first = letters.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default();
+        return Err(ApiError::field("baseUrl", "uri", format!("{first}{}.", letters.as_str())));
     }
     let token = match (body.token.as_deref().map(str::trim).filter(|token| !token.is_empty()), &before) {
         (Some(token), _) if token.len() <= 4096 => state.sealer.seal(token.as_bytes()),
