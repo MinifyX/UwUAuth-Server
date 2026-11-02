@@ -1,4 +1,5 @@
-//! Groups. Admins make, change and delete them; a group's owners may change who is in it.
+//! Groups. Admins make, change and delete them; a group's owners may change who is in it —
+//! themselves and the people they look after, nobody else.
 //! Everybody signed in may see the list of groups — LDAP shows it to every app anyway.
 
 use super::people::{WindowIn, window_view, windows_from};
@@ -273,6 +274,21 @@ async fn set_members(
         _ => current.owners,
     };
     let people: BTreeSet<String> = state.store.people().await?.into_iter().map(|person| person.id).collect();
+    // An owner who is no admin brings in only themselves and the accounts they look after: a
+    // group can open apps or put its members in a manager's care, so pulling in anybody else
+    // would hand out what is not theirs to give. Who is in already may stay; leaving is free.
+    if !is_admin {
+        let reachable = super::people::reachable(&state, &me.person.id).await?;
+        let stranger = body.people.iter().any(|person| {
+            people.contains(person)
+                && *person != me.person.id
+                && !current.people.contains(person)
+                && !reachable.contains(person)
+        });
+        if stranger {
+            return Err(ApiError::forbidden("Owners add only themselves and the people they look after."));
+        }
+    }
     let groups: BTreeSet<String> = state.store.groups().await?.into_iter().map(|group| group.id).collect();
     // Owners change who is in their group, person by person; which groups are inside it is the
     // admins' to say — a group put inside could be anybody's.
