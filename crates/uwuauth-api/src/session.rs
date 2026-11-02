@@ -18,6 +18,7 @@
 use crate::AppState;
 use crate::crypto::{random_token, sha256};
 use crate::errors::{ApiError, ApiResult};
+use crate::proxies::{self, Cidr};
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::request::Parts;
@@ -35,12 +36,8 @@ pub const FRESH_SECONDS: i64 = 10 * 60;
 
 // ── Where a request comes from ────────────────────────────
 
-/// The address a request comes from: the peer's, or behind a trusted proxy the last one in
-/// `X-Forwarded-For` (or `X-Real-IP`).
-///
-/// The last, not the first: a proxy like nginx with `$proxy_add_x_forwarded_for` appends the
-/// address it sees to whatever the client sent, so everything before that is the client's to
-/// make up — and with it, a fresh rate limit on every request.
+/// The address a request comes from: the peer's, or behind a trusted proxy the client's as the
+/// proxies tell it (see [`crate::proxies`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientIp(pub IpAddr);
 
@@ -48,36 +45,17 @@ impl FromRequestParts<AppState> for ClientIp {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
-        Ok(ClientIp(client_ip(parts, state.config.trust_forwarded)))
+        Ok(ClientIp(client_ip(parts, &state.config.trusted_proxies)))
     }
 }
 
-pub(crate) fn client_ip(parts: &Parts, trust_forwarded: bool) -> IpAddr {
-    if trust_forwarded {
-        let forwarded_for = parts.headers.get_all("x-forwarded-for").into_iter().next_back();
-        let forwarded = forwarded_for
-            .and_then(|value| value.to_str().ok())
-            .and_then(|list| list.rsplit(',').next())
-            .or_else(|| parts.headers.get("x-real-ip").and_then(|value| value.to_str().ok()))
-            .and_then(|value| value.trim().parse::<IpAddr>().ok());
-        if let Some(ip) = forwarded {
-            return canonical(ip);
-        }
-    }
-    parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| canonical(info.0.ip()))
-        .unwrap_or(IpAddr::from([0, 0, 0, 0]))
+pub(crate) fn client_ip(parts: &Parts, trusted_proxies: &[Cidr]) -> IpAddr {
+    let peer =
+        parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|info| info.0.ip()).unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    proxies::client_behind(peer, trusted_proxies, &parts.headers)
 }
 
-/// An IPv4 address as itself, not mapped into IPv6.
-pub fn canonical(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        v4 => v4,
-    }
-}
+pub use crate::proxies::canonical;
 
 /// The browser's `User-Agent`, cut short.
 pub fn user_agent(headers: &HeaderMap) -> Option<String> {
@@ -230,7 +208,7 @@ impl Me {
 }
 
 async fn signed_in(parts: &Parts, state: &AppState) -> ApiResult<Me> {
-    let ip = client_ip(parts, state.config.trust_forwarded);
+    let ip = client_ip(parts, &state.config.trusted_proxies);
     from_headers(state, &parts.headers, ip).await?.ok_or_else(ApiError::unauthorized)
 }
 
@@ -418,10 +396,13 @@ mod tests {
             parts.extensions.insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 5000))));
             parts
         };
+        let local = crate::proxies::parse_list("127.0.0.1").unwrap();
         let spoofed = parts(&[("x-forwarded-for", "203.0.113.9, 198.51.100.7")]);
-        assert_eq!(client_ip(&spoofed, true), IpAddr::from([198, 51, 100, 7]));
-        assert_eq!(client_ip(&spoofed, false), IpAddr::from([127, 0, 0, 1]), "not believed unless trusted");
+        assert_eq!(client_ip(&spoofed, &local), IpAddr::from([198, 51, 100, 7]));
+        assert_eq!(client_ip(&spoofed, &[]), IpAddr::from([127, 0, 0, 1]), "not believed unless trusted");
+        let elsewhere = crate::proxies::parse_list("192.0.2.0/24").unwrap();
+        assert_eq!(client_ip(&spoofed, &elsewhere), IpAddr::from([127, 0, 0, 1]), "only from a trusted proxy");
         let real = parts(&[("x-real-ip", "198.51.100.8")]);
-        assert_eq!(client_ip(&real, true), IpAddr::from([198, 51, 100, 8]));
+        assert_eq!(client_ip(&real, &local), IpAddr::from([198, 51, 100, 8]));
     }
 }
