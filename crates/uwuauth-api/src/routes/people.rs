@@ -358,6 +358,14 @@ async fn change(
         Some(email) => Some(Some(policy::email(email)?)),
         None => None,
     };
+    // The address a reset goes to, whether it counts and the user name decide who can take the
+    // account over, so changing them wants a recent sign-in like the other powerful actions.
+    let takes_over = username.as_ref().is_some_and(|username| *username != person.username)
+        || email.as_ref().is_some_and(|email| *email != person.email)
+        || (change.email_verified == Some(true) && !person.email_verified && person.email.is_some());
+    if takes_over {
+        me.require_fresh()?;
+    }
     let expires = match change.expires.as_deref() {
         Some("") => Some(None),
         Some(text) => Some(Some(clock::format(
