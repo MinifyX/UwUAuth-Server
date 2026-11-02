@@ -66,6 +66,15 @@ says what Let's Encrypt said.
 `UWUAUTH_TRUST_FORWARDED=on`, so the server sees who is asking and not only the proxy — and only
 then, because anybody can send that header to a server that believes it.
 
+Even then, `X-Forwarded-For` counts only on requests that come from a trusted proxy, and it is read
+from the right: past every hop that is a trusted proxy itself, the first address that is none is
+the client's. `X-Real-IP` is read only when there is no `X-Forwarded-For`. Which proxies are
+trusted, `UWUAUTH_TRUSTED_PROXIES` says: addresses or networks, separated by commas, like
+`192.0.2.10, 198.51.100.0/24`. Without it, loopback and the private networks count
+(`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `::1`, `fc00::/7`) — a proxy on
+the same machine or in Docker next to it. A proxy on another public address, or a CDN in front,
+needs its networks named.
+
 Caddy:
 
 ```caddyfile
@@ -213,7 +222,8 @@ admin portal instead.
 | `UWUAUTH_ACME_EMAIL` | — | Where Let's Encrypt writes about certificates that did not renew. |
 | `UWUAUTH_ACME_DIRECTORY` | `letsencrypt` | `letsencrypt`, `staging`, or the https address of another ACME directory. |
 | `UWUAUTH_TLS_CERT`, `UWUAUTH_TLS_KEY` | `/data/tls/cert.pem`, `/data/tls/key.pem` | The PEM files for `files`. |
-| `UWUAUTH_TRUST_FORWARDED` | `off` | Believe the address the proxy added last to `X-Forwarded-For`. Only behind a proxy that sets it. |
+| `UWUAUTH_TRUST_FORWARDED` | `off` | Believe the address the proxy added to `X-Forwarded-For`. Only behind a proxy that sets it. |
+| `UWUAUTH_TRUSTED_PROXIES` | loopback and private networks | With `UWUAUTH_TRUST_FORWARDED=on`: the proxies, as addresses or networks (`192.0.2.10, 198.51.100.0/24`), whose `X-Forwarded-For` counts. |
 | `UWUAUTH_UPDATE_CHECK` | `on` | Ask GitHub once a day whether there is a newer release. |
 | `RUST_LOG` | `info` for the server | How much it logs, e.g. `uwuauth_server=debug`. |
 

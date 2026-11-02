@@ -96,6 +96,10 @@ sudo bash install.sh --behind-proxy https://auth.example.com --proxy-network pro
 `--admin` prints the link to make the first admin's account with. LDAP is off unless asked for
 (`--ldap --ldap-bind <an address in your network>`).
 
+Behind a proxy, the server believes `X-Forwarded-For` only from the proxy itself: by default from
+loopback and the private networks, or from what `UWUAUTH_TRUSTED_PROXIES` in `.env` names
+(`192.0.2.10, 198.51.100.0/24`) when the proxy sits anywhere else.
+
 [docs/deployment.md](docs/deployment.md) has the rest: Caddy and nginx in front, your own
 certificate, backups, every setting.
 
