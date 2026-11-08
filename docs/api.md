@@ -65,7 +65,7 @@ sign-in (downloading a backup, setting someone's password) works with a token.
 | --- | --- |
 | `GET /uwu/v1/groups`, `POST` | `{name, description?, requireMfa?, ldapAppPasswordsOnly?}` |
 | `GET`/`PATCH`/`DELETE /uwu/v1/groups/{id}` | `admins` and `everyone` cannot be deleted |
-| `PUT /uwu/v1/groups/{id}/members` | `{people: [id], groups: [id], owners?: [id]}` — a group never ends up inside itself |
+| `PUT /uwu/v1/groups/{id}/members` | `{people: [id], groups: [id], owners?: [id]}` — a group never ends up inside itself. An owner who is no admin changes only `people`, and adds only themselves and the accounts they look after (403 otherwise); who is in already may stay or go |
 | `PUT /uwu/v1/groups/{id}/windows` | Like a person's |
 
 ## Invitations
