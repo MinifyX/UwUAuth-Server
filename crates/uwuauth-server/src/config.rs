@@ -8,6 +8,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use uwuauth_api::Settings;
+use uwuauth_api::proxies::{self, Cidr};
 use uwuauth_mail::{Language, Security, SmtpSettings};
 
 /// Where the certificate comes from.
@@ -61,6 +62,9 @@ pub struct Config {
     /// Trust `X-Forwarded-For` for the address a request comes from. Only ever on behind a proxy
     /// that sets it, or anyone can pretend to be someone else.
     pub trust_forwarded: bool,
+    /// Where that proxy is: only requests from these networks have their `X-Forwarded-For`
+    /// believed. None: loopback and the private networks.
+    pub trusted_proxies: Option<Vec<Cidr>>,
     /// Ask GitHub once a day whether there is a newer release, and say so in the log. The only
     /// connection the server opens on its own.
     pub update_check: bool,
@@ -94,6 +98,7 @@ impl Default for Config {
             public: None,
             tls: TlsMode::Off,
             trust_forwarded: false,
+            trusted_proxies: None,
             update_check: true,
             channel: None,
             login_attempts: 10,
@@ -108,6 +113,16 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The proxies whose `X-Forwarded-For` counts: none unless `trust_forwarded`, then the list,
+    /// or loopback and the private networks without one.
+    pub fn proxies(&self) -> Vec<Cidr> {
+        match (self.trust_forwarded, &self.trusted_proxies) {
+            (false, _) => Vec::new(),
+            (true, Some(list)) => list.clone(),
+            (true, None) => proxies::private_networks(),
+        }
+    }
+
     /// Read the environment. A variable that is set but unusable is an error rather than a
     /// default quietly taking over — a server that listens somewhere else than asked, or without
     /// the TLS it was told to use, is worse than one that refuses to start.
@@ -131,6 +146,16 @@ impl Config {
         if let Some(trust) = var("UWUAUTH_TRUST_FORWARDED") {
             config.trust_forwarded =
                 switch(&trust).ok_or_else(|| format!("UWUAUTH_TRUST_FORWARDED must be on or off: {trust}"))?;
+        }
+        if let Some(list) = var("UWUAUTH_TRUSTED_PROXIES") {
+            if !config.trust_forwarded {
+                return Err("UWUAUTH_TRUSTED_PROXIES is only read with UWUAUTH_TRUST_FORWARDED=on".into());
+            }
+            let networks = proxies::parse_list(&list).map_err(|error| format!("UWUAUTH_TRUSTED_PROXIES: {error}"))?;
+            if networks.is_empty() {
+                return Err("UWUAUTH_TRUSTED_PROXIES names no proxy".into());
+            }
+            config.trusted_proxies = Some(networks);
         }
         if let Some(check) = var("UWUAUTH_UPDATE_CHECK") {
             config.update_check =
@@ -473,5 +498,22 @@ mod tests {
         assert!(config(&[("UWUAUTH_LISTEN", "everywhere")]).is_err());
         assert!(config(&[("UWUAUTH_UPDATE_CHECK", "later")]).is_err());
         assert!(config(&[("UWUAUTH_TRUST_FORWARDED", "sometimes")]).is_err());
+        assert!(config(&[("UWUAUTH_TRUSTED_PROXIES", "192.0.2.10")]).is_err(), "only with forwarding on");
+        let on = |list: &str| config(&[("UWUAUTH_TRUST_FORWARDED", "on"), ("UWUAUTH_TRUSTED_PROXIES", list)]);
+        assert!(on("192.0.2.10, proxy.example.com").is_err());
+        assert!(on(" , ").is_err());
+    }
+
+    #[test]
+    fn forwarded_addresses_count_from_the_proxies_named() {
+        assert!(config(&[]).unwrap().proxies().is_empty(), "the peer's address unless forwarding is on");
+        let on = config(&[("UWUAUTH_TRUST_FORWARDED", "on")]).unwrap().proxies();
+        assert!(on.iter().any(|net| net.contains("172.18.0.1".parse().unwrap())), "a proxy in Docker next door");
+        assert!(!on.iter().any(|net| net.contains("203.0.113.1".parse().unwrap())), "nobody on the internet");
+        let named =
+            config(&[("UWUAUTH_TRUST_FORWARDED", "on"), ("UWUAUTH_TRUSTED_PROXIES", "192.0.2.10, 2001:db8::/32")])
+                .unwrap()
+                .proxies();
+        assert_eq!(named.iter().map(ToString::to_string).collect::<Vec<_>>(), ["192.0.2.10/32", "2001:db8::/32"]);
     }
 }

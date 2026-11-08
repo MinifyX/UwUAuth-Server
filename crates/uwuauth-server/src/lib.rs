@@ -31,7 +31,7 @@ pub fn open_store(config: &Config) -> Result<Store, String> {
 /// What the API needs.
 pub async fn app_state(config: &Config, store: Store, logs: Arc<LogBuffer>) -> Result<AppState, String> {
     let mut api = ApiConfig::new(&config.base_url(), config.data_dir.clone());
-    api.trust_forwarded = config.trust_forwarded;
+    api.trusted_proxies = config.proxies();
     api.backups = config.backups();
     api.login_attempts = config.login_attempts;
     api.start_settings = config.start_settings.clone();
@@ -109,6 +109,11 @@ pub async fn run(
             listen = %local, %url, domain = %acme.domain, directory = %acme.directory,
             "serving TLS with a certificate from Let's Encrypt"
         ),
+    }
+    let proxies = config.proxies();
+    if !proxies.is_empty() {
+        let list = proxies.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        tracing::info!(proxies = %list, "believing X-Forwarded-For from these proxies only");
     }
     if let Some(ready) = ready {
         let _ = ready.send(local);

@@ -21,6 +21,7 @@ mod logs;
 pub mod memory;
 pub mod oidc;
 pub mod policy;
+pub mod proxies;
 pub mod routes;
 pub mod session;
 pub mod settings;
@@ -55,8 +56,9 @@ pub struct ApiConfig {
     /// How people and apps reach this server: `https://auth.example.com`. The issuer of every
     /// token, the origin of every passkey, and what links in mails point to.
     pub public: String,
-    /// Trust `X-Forwarded-For` for the address a request comes from.
-    pub trust_forwarded: bool,
+    /// The proxies whose `X-Forwarded-For` and `X-Real-IP` are believed for the address a request
+    /// comes from. None: always the peer's.
+    pub trusted_proxies: Vec<proxies::Cidr>,
     /// Where backups go.
     pub backups: PathBuf,
     /// The data directory.
@@ -78,7 +80,7 @@ impl ApiConfig {
     pub fn new(public: &str, data: PathBuf) -> Self {
         ApiConfig {
             public: public.trim_end_matches('/').to_string(),
-            trust_forwarded: false,
+            trusted_proxies: Vec::new(),
             backups: data.join("backups"),
             data,
             hash_cost: HashCost::default(),
