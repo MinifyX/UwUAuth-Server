@@ -10,6 +10,8 @@ use axum_server::Handle;
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::ServerConfig;
 use rustls::crypto::ring;
+use rustls::pki_types::pem::{self, PemObject};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls_acme::AcmeConfig;
 use rustls_acme::caches::DirCache;
 use std::future::Future;
@@ -230,15 +232,16 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Idle<S> {
 /// A TLS configuration from a certificate chain and a key in PEM files.
 pub fn from_files(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, String> {
     let read = |path: &Path| std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()));
-    let chain = rustls_pemfile::certs(&mut read(cert)?.as_slice())
+    let chain = CertificateDer::pem_slice_iter(&read(cert)?)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("{}: {error}", cert.display()))?;
     if chain.is_empty() {
         return Err(format!("{} holds no certificate", cert.display()));
     }
-    let key_der = rustls_pemfile::private_key(&mut read(key)?.as_slice())
-        .map_err(|error| format!("{}: {error}", key.display()))?
-        .ok_or_else(|| format!("{} holds no private key", key.display()))?;
+    let key_der = PrivateKeyDer::from_pem_slice(&read(key)?).map_err(|error| match error {
+        pem::Error::NoItemsFound => format!("{} holds no private key", key.display()),
+        error => format!("{}: {error}", key.display()),
+    })?;
     let mut tls = ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(|error| error.to_string())?
@@ -329,7 +332,7 @@ fn acme_acceptor(acme: &Acme, cache: &Path) -> Result<(rustls_acme::axum::AxumAc
 fn client_trusting(ca: &Path) -> Result<Arc<rustls::ClientConfig>, String> {
     let pem = std::fs::read(ca).map_err(|error| format!("{}: {error}", ca.display()))?;
     let mut roots: rustls::RootCertStore = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
-    for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+    for cert in CertificateDer::pem_slice_iter(&pem) {
         let cert = cert.map_err(|error| format!("{}: {error}", ca.display()))?;
         roots.add(cert).map_err(|error| format!("{}: {error}", ca.display()))?;
     }
