@@ -725,16 +725,28 @@ impl Ldap {
         let limit = usize::try_from(request.sizelimit).ok().filter(|limit| *limit > 0).unwrap_or(MOST).min(MOST);
         let asked: Vec<String> = request.attrs.iter().map(|name| name.to_lowercase()).collect();
         let photos = asked.iter().any(|name| PHOTOS.contains(&name.as_str()));
+        let on_page: Vec<usize> = found.iter().skip(start).take(page.min(limit)).copied().collect();
+        // Photos only when asked for by name, fetched then for the whole page at once: they are
+        // big, and most searches never want them.
+        let jpegs = if photos {
+            let people: Vec<String> = on_page
+                .iter()
+                .filter_map(|index| match &snapshot.entries[*index].kind {
+                    Kind::Person(person) => Some(person.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.state.store.avatars_of(people).await.unwrap_or_default()
+        } else {
+            Default::default()
+        };
         let mut replies = Vec::new();
-        for index in found.iter().skip(start).take(page.min(limit)) {
-            let entry = &snapshot.entries[*index];
+        for index in on_page {
+            let entry = &snapshot.entries[index];
             let Some(seen) = snapshot.view(entry, &sees) else { continue };
             let mut shown = present(&seen, &asked, request.typesonly);
-            // Photos only when asked for by name, fetched then: they are big, and most
-            // searches never want them.
-            if photos
-                && let Kind::Person(person) = &entry.kind
-                && let Ok(Some((jpeg, _))) = self.state.store.avatar(person).await
+            if let Kind::Person(person) = &entry.kind
+                && let Some(jpeg) = jpegs.get(person)
             {
                 for name in ["jpegPhoto", "thumbnailPhoto"] {
                     if asked.contains(&name.to_lowercase()) {

@@ -486,6 +486,17 @@ async fn an_admin_sets_up_scim_for_any_app_and_the_task_pushes() {
         .await;
     let id = app["id"].as_str().unwrap();
     let path = format!("/uwu/v1/apps/{id}/scim");
+    // The token only goes to the app's own hosts, over https unless the app lives on this machine.
+    for elsewhere in
+        [format!("{url}/scim/v2"), "https://other.example.net/scim/v2".into(), "http://wiki.example.com/scim".into()]
+    {
+        let refused =
+            admin.request("PUT", &path, Some(json!({ "baseUrl": elsewhere, "token": "from-the-wiki" }))).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{elsewhere}");
+    }
+    admin.ok("PUT", &path, json!({ "baseUrl": "https://wiki.example.com/scim/v2", "token": "from-the-wiki" })).await;
+    admin.ok("DELETE", &path, json!({})).await;
+    admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "launchUrl": format!("{url}/") })).await;
     let without = admin.request("PUT", &path, Some(json!({ "baseUrl": format!("{url}/scim/v2") }))).await;
     assert_eq!(without.status(), StatusCode::BAD_REQUEST, "a token is needed");
     scim::spawn(server.state.clone());

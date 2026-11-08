@@ -297,25 +297,34 @@ async fn an_app_finds_people_the_active_directory_way() {
 async fn a_long_list_comes_in_pages() {
     let world = world(true, None).await;
     for name in ["a1", "a2", "a3", "a4", "a5"] {
-        world.person(name, name).await;
+        let id = world.person(name, name).await;
+        if name == "a2" || name == "a5" {
+            world.state.store.set_avatar(&id, Some(format!("photo of {name}").into_bytes())).await.unwrap();
+        }
     }
     world.service("app", "secret secret").await;
     let mut client = world.connect();
     client.bind("cn=app,ou=services,dc=example,dc=com", "secret secret").await;
     let mut cookie = Vec::new();
     let mut seen = Vec::new();
+    let mut photos = Vec::new();
     loop {
         let (entries, done) = client
             .search_with(
                 "ou=people,dc=example,dc=com",
                 LdapSearchScope::OneLevel,
                 "(objectClass=person)",
-                &["uid"],
+                &["uid", "jpegPhoto"],
                 vec![LdapControl::SimplePagedResults { size: 2, cookie: cookie.clone() }],
             )
             .await;
         assert!(entries.len() <= 2);
         seen.extend(entries.iter().flat_map(|entry| values(entry, "uid")));
+        for entry in &entries {
+            for photo in values(entry, "jpegPhoto") {
+                photos.push((values(entry, "uid").concat(), photo));
+            }
+        }
         cookie = done
             .ctrl
             .iter()
@@ -330,6 +339,12 @@ async fn a_long_list_comes_in_pages() {
     }
     seen.sort();
     assert_eq!(seen, ["a1", "a2", "a3", "a4", "a5"]);
+    photos.sort();
+    assert_eq!(
+        photos,
+        [("a2".to_string(), "photo of a2".to_string()), ("a5".to_string(), "photo of a5".to_string())],
+        "each photo with its own person, all loaded for the page at once"
+    );
 }
 
 #[tokio::test]
