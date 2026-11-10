@@ -918,6 +918,42 @@ async fn a_second_factor_the_app_asks_for_later_holds_at_every_grant() {
 }
 
 #[tokio::test]
+async fn a_group_that_starts_asking_for_a_second_factor_holds_for_open_sessions() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, _) = app(
+        &admin,
+        json!({ "name": "App", "redirectUris": [REDIRECT], "grantTypes": ["authorization_code", "refresh_token"] }),
+    )
+    .await;
+    let secret = secret.unwrap();
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let basic = Some((client_id.as_str(), secret.as_str()));
+    let (_, tokens) =
+        token(&server, basic, &[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", REDIRECT)])
+            .await;
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_string();
+
+    // After the password-only sign-in, a group of theirs starts asking for a second factor.
+    let me = admin.json("/uwu/v1/me").await;
+    let group = admin.ok("POST", "/uwu/v1/groups", json!({ "name": "careful", "requireMfa": true })).await;
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{}/members", group["id"].as_str().unwrap()),
+            json!({ "people": [me["id"]], "groups": [] }),
+        )
+        .await;
+    let asked = format!("/oauth/authorize?response_type=code&client_id={client_id}&scope=openid&redirect_uri={}", {
+        url::form_urlencoded::byte_serialize(REDIRECT.as_bytes()).collect::<String>()
+    });
+    let answer = location(&admin.get(&asked).await);
+    assert!(answer.contains("/#/denied?reason=mfa"), "no code without the second factor: {answer}");
+    let (_, body) = token(&server, basic, &[("grant_type", "refresh_token"), ("refresh_token", &refresh)]).await;
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+}
+
+#[tokio::test]
 async fn a_device_code_runs_out_however_often_it_is_asked() {
     let server = TestServer::new().await;
     let admin = server.person("admin", true).await;

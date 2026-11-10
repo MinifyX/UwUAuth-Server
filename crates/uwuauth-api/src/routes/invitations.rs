@@ -93,6 +93,13 @@ pub async fn invite(state: &AppState, created_by: Option<&str>, new: InviteField
         return Err(ApiError::field("email", "exists", "That address has an account already."));
     }
     let known: Vec<String> = state.store.groups().await?.into_iter().map(|group| group.id).collect();
+    // Managers as for a person's own list: people there are.
+    let mut managers = Vec::new();
+    for manager in new.managers {
+        if state.store.person(&manager).await?.is_some_and(|person| person.deleted.is_none()) {
+            managers.push(manager);
+        }
+    }
     let mut invitation = Invitation {
         mailed: new.mail && email.is_some() && state.mailer.enabled(),
         email,
@@ -100,7 +107,7 @@ pub async fn invite(state: &AppState, created_by: Option<&str>, new: InviteField
         groups: new.groups.into_iter().filter(|group| known.contains(group)).collect(),
         admin: new.admin,
         managed: new.managed,
-        managers: new.managers,
+        managers,
         language: new.language.map(|language| policy::language(&language)),
     };
     let token = random_token(32);
@@ -144,7 +151,9 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     // An invitation that makes an admin is as much as an admin's password: only a person who
     // confirmed a moment ago, never a script's token.
-    if new.admin {
+    // An admin's rights through a group inside Admins count the same.
+    let membership = state.store.membership().await?;
+    if super::groups::makes_admin(&membership, new.admin, &new.groups) {
         match &admin {
             AdminOnly::Person(me) => me.require_fresh()?,
             AdminOnly::Token(_) => return Err(ApiError::forbidden("A token cannot invite admins.")),

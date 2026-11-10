@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use uwuauth_mail::Language;
-use uwuauth_store::{
-    ADMINS_ID, AttributeDef, EVERYONE_ID, EventFilter, GroupFields, Members, NewPerson, backups, with_suffix,
-};
+use uwuauth_store::{AttributeDef, EVERYONE_ID, EventFilter, GroupFields, Members, NewPerson, backups, with_suffix};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
@@ -436,10 +434,11 @@ async fn export(
         .into_response())
 }
 
-/// A CSV field, quoted when it has to be. A leading `=`, `+`, `-` or `@` gets a `'` in front, so
-/// a spreadsheet does not run it as a formula.
+/// A CSV field, quoted when it has to be. A leading `=`, `+`, `-`, `@`, tab or carriage return
+/// gets a `'` in front, so a spreadsheet does not run it as a formula.
 fn csv_field(value: &str) -> String {
-    let value = if value.starts_with(['=', '+', '-', '@']) { format!("'{value}") } else { value.to_string() };
+    let value =
+        if value.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{value}") } else { value.to_string() };
     if value.contains([',', '"', '\n', '\r']) { format!("\"{}\"", value.replace('"', "\"\"")) } else { value }
 }
 
@@ -575,7 +574,9 @@ async fn import(
         }
         push(&mut report, ["groups", "created"], json!(name));
     }
-    let builtin: BTreeSet<String> = [ADMINS_ID.to_string(), EVERYONE_ID.to_string()].into();
+    // Admins and every group inside it count as built in: they make admins.
+    let mut builtin = super::groups::admin_groups(&state.store.membership().await?);
+    builtin.insert(EVERYONE_ID.to_string());
     let defs = state.store.attribute_defs().await?;
     let mut person_ids: BTreeMap<String, String> =
         state.store.people().await?.into_iter().map(|person| (person.username.clone(), person.id)).collect();
@@ -626,8 +627,8 @@ async fn import(
                     continue;
                 }
             };
-            // Never into a group that comes with the server: an export of another server must not
-            // make anybody an admin here.
+            // Never into a group that comes with the server or sits inside Admins: an export of
+            // another server must not make anybody an admin here.
             let groups: Vec<String> = person
                 .groups
                 .iter()
@@ -695,6 +696,8 @@ mod tests {
         assert_eq!(rows, vec![vec!["username", "displayName"], vec!["nyu", "Nyu, the cat"], vec!["mia", "Mia \"M\""]]);
         assert_eq!(csv_field("Nyu, the cat"), "\"Nyu, the cat\"");
         assert_eq!(csv_field("=cmd()"), "'=cmd()");
+        assert_eq!(csv_field("\t=cmd()"), "'\t=cmd()");
+        assert_eq!(csv_field("\r=cmd()"), "\"'\r=cmd()\"");
     }
 
     #[test]

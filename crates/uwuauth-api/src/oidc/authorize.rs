@@ -230,6 +230,19 @@ pub async fn refusal(state: &AppState, app: &App, person: &Person) -> ApiResult<
     Ok(None)
 }
 
+/// Whether a sign-in with `amr` lacks the second factor `app` or one of the person's groups
+/// asks for. Groups count here too: one can start asking after the session began.
+pub async fn second_factor_missing(state: &AppState, app: &App, person: &str, amr: &[String]) -> ApiResult<bool> {
+    if strong(amr) {
+        return Ok(false);
+    }
+    if app.require_mfa {
+        return Ok(true);
+    }
+    let membership = state.store.membership().await?;
+    Ok(policy::needs_mfa(&state.store.groups().await?, &membership.groups_of(person)))
+}
+
 /// Whether a session's sign-in counts as two factors.
 pub fn strong(amr: &[String]) -> bool {
     amr.iter().any(|method| method == "mfa" || method == "hwk")
@@ -346,7 +359,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
         }
         return Ok(page(state, "denied", &[("reason", reason), ("app", &app.name)]));
     }
-    if app.require_mfa && !strong(&amr) {
+    if second_factor_missing(state, &app, &me.person.id, &amr).await? {
         if prompts.contains(&"none") {
             return refuse("interaction_required", "this app needs a second factor");
         }

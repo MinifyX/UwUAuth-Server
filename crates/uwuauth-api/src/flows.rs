@@ -796,11 +796,108 @@ async fn a_token_ends_with_its_maker_s_admin_right() {
 async fn an_import_makes_nobody_an_admin() {
     let server = TestServer::new().await;
     let admin = server.person("admin", true).await;
-    let export = json!({ "people": [{ "username": "mallory", "displayName": "M", "groups": ["admins"] }], "groups": [{ "name": "admins", "members": ["mallory"] }] });
+    // Nor through a group of this server that sits inside Admins.
+    let admin_id = admin.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let parents = admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Eltern" })).await["id"].clone();
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{}/members", uwuauth_store::ADMINS_ID),
+            json!({ "people": [admin_id], "groups": [parents] }),
+        )
+        .await;
+    let export = json!({
+        "people": [
+            { "username": "mallory", "displayName": "M", "groups": ["admins"] },
+            { "username": "trudy", "displayName": "T", "groups": ["Eltern"] },
+        ],
+        "groups": [{ "name": "admins", "members": ["mallory"] }],
+    });
     admin.ok("POST", "/uwu/v1/import", export).await;
     let people = admin.json("/uwu/v1/people").await;
-    let mallory = people.as_array().unwrap().iter().find(|person| person["username"] == "mallory").unwrap();
-    assert_eq!(mallory["admin"], false);
+    for name in ["mallory", "trudy"] {
+        let found = people.as_array().unwrap().iter().find(|person| person["username"] == name).unwrap();
+        assert_eq!(found["admin"], false, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_group_inside_admins_counts_as_admin_for_invitations_and_new_people() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let owner = server.person("owner", false).await;
+    let owner_id = owner.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let admin_id = admin.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    let parents =
+        admin.ok("POST", "/uwu/v1/groups", json!({ "name": "Eltern" })).await["id"].as_str().unwrap().to_string();
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{parents}/members"),
+            json!({ "people": [], "groups": [], "owners": [owner_id.clone()] }),
+        )
+        .await;
+    admin
+        .ok(
+            "PUT",
+            &format!("/uwu/v1/groups/{}/members", uwuauth_store::ADMINS_ID),
+            json!({ "people": [admin_id], "groups": [parents] }),
+        )
+        .await;
+
+    // A manager who owns a group inside Admins makes no admin with it.
+    let made =
+        owner.request("POST", "/uwu/v1/people", Some(json!({ "username": "kid", "groups": [parents.clone()] }))).await;
+    assert_eq!(made.status(), StatusCode::FORBIDDEN);
+    // A script's token invites no admin through it either.
+    let secret =
+        admin.ok("POST", "/uwu/v1/tokens", json!({ "name": "script" })).await["secret"].as_str().unwrap().to_string();
+    let by_token = server
+        .send(
+            axum::http::Request::post("/uwu/v1/invitations")
+                .header("authorization", format!("Bearer {secret}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({ "groups": [parents.clone()] }).to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(by_token.status(), StatusCode::FORBIDDEN);
+    // An admin, a while after signing in, confirms first: for the group and for `admin` alike.
+    age(&server, &admin).await;
+    let invite = admin.request("POST", "/uwu/v1/invitations", Some(json!({ "groups": [parents.clone()] }))).await;
+    assert_eq!(json(invite).await["error"], "reauth");
+    let person = admin.request("POST", "/uwu/v1/people", Some(json!({ "username": "boss", "admin": true }))).await;
+    assert_eq!(json(person).await["error"], "reauth");
+}
+
+#[tokio::test]
+async fn an_invitation_ends_with_its_maker_s_admin_right() {
+    let server = TestServer::new().await;
+    let first = server.person("first", true).await;
+    let second = server.person("second", true).await;
+    let second_id = second.json("/uwu/v1/me").await["id"].as_str().unwrap().to_string();
+    // Managers only of people there are.
+    let invited = second.ok("POST", "/uwu/v1/invitations", json!({ "managers": [second_id.clone(), "nobody"] })).await;
+    assert_eq!(invited["managers"], json!([second_id]));
+    let token = token_of(invited["link"].as_str().unwrap());
+    first.ok("PUT", &format!("/uwu/v1/people/{second_id}/groups"), json!({ "groups": [] })).await;
+    let accepted = server
+        .browser()
+        .post(&format!("/uwu/v1/links/invite/{token}"), json!({ "username": "late", "password": PASSWORD }))
+        .await;
+    assert_eq!(accepted.status(), StatusCode::GONE);
+
+    // Withdrawing and renewing is for invitations, not for other links by their id.
+    let reset = server
+        .state
+        .store
+        .create_link(vec![7; 32], uwuauth_store::Purpose::Reset, Some(&second_id), "{}", None, &clock::in_seconds(600))
+        .await
+        .unwrap();
+    let renewed = first.request("POST", &format!("/uwu/v1/invitations/{}/renew", reset.id), Some(json!({}))).await;
+    assert_eq!(renewed.status(), StatusCode::NOT_FOUND);
+    let deleted = first.request("DELETE", &format!("/uwu/v1/invitations/{}", reset.id), None).await;
+    assert_eq!(deleted.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

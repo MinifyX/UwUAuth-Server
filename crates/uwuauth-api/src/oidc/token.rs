@@ -10,7 +10,7 @@
 //!   sign the person in again. Every refresh checks again that the person may use the app — a
 //!   kid's time window that closed ends the app's access within a quarter of an hour.
 
-use super::authorize::{Code, refusal, strong};
+use super::authorize::{Code, refusal, second_factor_missing};
 use super::claims;
 use super::device::DeviceState;
 use super::keys::{Alg, half_hash};
@@ -239,7 +239,7 @@ async fn code_grant(
     if refusal(state, &client.app, &person).await?.is_some() {
         return Ok(invalid_grant("the person may not use this app now"));
     }
-    if client.app.require_mfa && !strong(&found.amr) {
+    if second_factor_missing(state, &client.app, &person.id, &found.amr).await? {
         return Ok(invalid_grant("this app needs a second factor"));
     }
     let issued = tokens(
@@ -323,7 +323,7 @@ async fn refresh_grant(
     }
     let amr: Vec<String> = serde_json::from_str(&found.amr).unwrap_or_default();
     // The app may have started asking for a second factor after this sign-in.
-    if client.app.require_mfa && !strong(&amr) {
+    if second_factor_missing(state, &client.app, &person.id, &amr).await? {
         state.store.revoke_family(&found.family).await?;
         return Ok(invalid_grant("this app needs a second factor; the app has to sign in again"));
     }
@@ -422,7 +422,7 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
             if refusal(state, &client.app, &person).await?.is_some() {
                 return Ok(invalid_grant("the person may not use this app now"));
             }
-            if client.app.require_mfa && !strong(&amr) {
+            if second_factor_missing(state, &client.app, &person.id, &amr).await? {
                 return Ok(invalid_grant("this app needs a second factor"));
             }
             let issued = tokens(

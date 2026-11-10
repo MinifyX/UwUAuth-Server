@@ -351,9 +351,13 @@ impl Store {
         .await
     }
 
+    /// Withdraw an invitation; other links are not for deleting by id.
     pub async fn delete_link(&self, id: &str) -> Result<bool> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| tx.execute("DELETE FROM links WHERE id = ?1", [id]).map(|n| n == 1)).await
+        self.sqlite_write(move |tx| {
+            tx.execute("DELETE FROM links WHERE id = ?1 AND purpose = 'invite'", [id]).map(|n| n == 1)
+        })
+        .await
     }
 
     /// Replace a link's secret, for "a new link" on an invitation: the old one stops working.
@@ -361,11 +365,15 @@ impl Store {
         let (id, expires) = (id.to_string(), expires.to_string());
         self.sqlite_write(move |tx| {
             tx.execute(
-                "UPDATE links SET hash = ?2, expires = ?3 WHERE id = ?1 AND used IS NULL",
+                "UPDATE links SET hash = ?2, expires = ?3 WHERE id = ?1 AND used IS NULL AND purpose = 'invite'",
                 params![id, hash, expires],
             )?;
-            tx.query_row(&format!("SELECT {LINK_COLUMNS} FROM links WHERE id = ?1 AND used IS NULL"), [&id], link_from)
-                .optional()
+            tx.query_row(
+                &format!("SELECT {LINK_COLUMNS} FROM links WHERE id = ?1 AND used IS NULL AND purpose = 'invite'"),
+                [&id],
+                link_from,
+            )
+            .optional()
         })
         .await
     }

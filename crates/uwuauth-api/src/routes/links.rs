@@ -203,6 +203,13 @@ async fn accept(
     body: Complete,
 ) -> ApiResult<Response> {
     let invitation: Invitation = serde_json::from_str(&link.data).unwrap_or_default();
+    // An invitation is only as good as whoever made it: an admin then, and still one now.
+    if let Some(creator) = link.created_by.as_deref()
+        && !(state.store.admin_ids().await?.contains(creator)
+            && state.store.person(creator).await?.is_some_and(|person| person.active()))
+    {
+        return Err(gone());
+    }
     let username = policy::username(body.username.as_deref().unwrap_or_default())?;
     let display_name = policy::display_name(body.display_name.as_deref().unwrap_or(&username))?;
     // The address the invitation went to stays; otherwise what the person typed, if anything.
@@ -276,6 +283,11 @@ async fn accept(
         }
     };
     let mut groups = invitation.groups.clone();
+    // A token's invitation never makes an admin, not even through a group put inside Admins since.
+    if link.created_by.is_none() && !invitation.admin {
+        let admins = super::groups::admin_groups(&state.store.membership().await?);
+        groups.retain(|group| !admins.contains(group));
+    }
     if invitation.admin {
         groups.push(ADMINS_ID.to_string());
     }

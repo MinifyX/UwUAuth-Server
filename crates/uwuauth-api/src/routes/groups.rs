@@ -30,6 +30,15 @@ pub(crate) fn admin_groups(membership: &uwuauth_store::Membership) -> BTreeSet<S
     found
 }
 
+/// Whether somebody put in `groups` (or made an admin outright) would be an admin: in Admins,
+/// or in a group inside it.
+pub(crate) fn makes_admin(membership: &uwuauth_store::Membership, admin: bool, groups: &[String]) -> bool {
+    admin || {
+        let admins = admin_groups(membership);
+        groups.iter().any(|group| admins.contains(group))
+    }
+}
+
 /// Refuse a change that would leave no active admin: `membership` is how it would be after it.
 pub(crate) async fn keep_admins(state: &AppState, membership: &uwuauth_store::Membership) -> ApiResult<()> {
     let before = state.store.admin_ids().await?;
