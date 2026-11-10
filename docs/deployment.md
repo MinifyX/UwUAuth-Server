@@ -179,6 +179,26 @@ Once a day the server asks GitHub whether there is something newer on that chann
 in its log. `UWUAUTH_UPDATE_CHECK=off` stops it. Nothing installs itself: a sign-in server that
 could replace itself from the network would be one more way in.
 
+### Signatures
+
+From 0.5.0-beta.3 on, the image and the release files are signed by the workflow that built
+them, with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/). There is no
+key to fetch; what is checked is that the signature comes from this repository's workflow.
+
+With cosign installed, `install.sh` and `update.sh` check the image they pulled and stop if the
+signature is missing or wrong. Without it they say that nothing was checked and go on.
+`UWUAUTH_SKIP_VERIFY=1` skips the check, for going back to a release from before signing.
+
+A release file, checked by hand before it is run:
+
+```sh
+curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/latest/download/install.sh
+curl -fsSLO https://github.com/MinifyX/UwUAuth-Server/releases/latest/download/install.sh.sigstore.json
+cosign verify-blob install.sh --bundle install.sh.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/MinifyX/UwUAuth-Server/\.github/workflows/ci\.yml@refs/tags/v'
+```
+
 ## Backups
 
 Every night, and before every update, the server writes a consistent copy of its database to

@@ -13,7 +13,7 @@ Nothing was rated Critical or High.
 
 | | Medium | Low | Fixed | Open |
 | --- | --- | --- | --- | --- |
-| Round 1 | 4 | 17 | 19 | 2 (L-16, L-17) |
+| Round 1 | 4 | 17 | 20 | 1 (L-17) |
 | Round 2 | 3 | 5 | 8 | 0 |
 | Dependencies | 1 | 0 | 1 | 0 |
 
@@ -116,6 +116,15 @@ files with triggers, views or virtual tables are refused; our own schema has non
 **Note — `install.sh` checked for a symlink after resolving it**, so the check never fired.
 *Fixed:* it runs before `realpath`. *Test:* `bash -n` and shellcheck.
 
+**Low (L-16) — releases and images were not signed.**
+Place: `.github/workflows/ci.yml` (jobs `image`, `release`), `install.sh`, `update.sh`.
+Cause: nothing tied an image or a release file to the workflow that built it; the checksum next
+to a file comes from the same place as the file.
+Fix: the workflow signs the pushed image digest and the release files with cosign (keyless, as
+the workflow run itself). `install.sh` and `update.sh` verify the pulled image when cosign is
+installed and stop if it does not check out; without cosign they say so and go on. The release
+files are verified by hand (`docs/deployment.md`).
+
 ## Round 2
 
 **Medium (M1) — a group's second factor was asked for at signing in only.** *Where:*
@@ -162,8 +171,6 @@ changes were needed. *Test:* `cargo audit` is clean, and all tests pass.
 
 ## Open
 
-- **L-16 — releases and images are not signed.** Signing needs a decision by the owner on keys
-  and where they live.
 - **L-17 — downloading a backup reads the whole file into memory.** Streaming it would need
   tokio-util's `io` feature, a new dependency edge. Backups are admin-only and as large as the
   database.

@@ -146,6 +146,30 @@ fetch_checked() {
 }
 
 hash_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# The image is signed by the workflow that built it (cosign, no key of ours). Checked by digest,
+# so it is what was pulled and not whatever the tag points at by now. Without cosign on this host
+# there is only a note: installing must not depend on a tool few people have.
+# shortcut: the release files themselves are signed too but only checked by hand
+# (docs/deployment.md); check them here once no unsigned release is updated from any more.
+image_is_signed() {
+  local name ref
+  [ "${UWUAUTH_SKIP_VERIFY:-}" = 1 ] && return 0
+  # No -m1 below: grep leaving early would fail the pipe under pipefail.
+  name=$(docker compose config --images </dev/null 2>/dev/null | grep '^ghcr\.io/minifyx/uwuauth-server[:@]') || return 0
+  name=${name%%$'\n'*}
+  if ! command -v cosign >/dev/null 2>&1; then
+    warn "cosign is not installed, so the image's signature was not checked"
+    return 0
+  fi
+  ref=$(docker image inspect "$name" --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null |
+    grep '^ghcr\.io/minifyx/uwuauth-server@sha256:') || return 1
+  ref=${ref%%$'\n'*}
+  cosign verify "$ref" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp '^https://github\.com/MinifyX/UwUAuth-Server/\.github/workflows/ci\.yml@refs/(tags/v[0-9][A-Za-z0-9.-]*|heads/main)$' \
+    >/dev/null 2>&1
+}
 # What a version or a channel may look like, before it goes into a URL or an image tag: letters,
 # digits, dots, dashes and underscores, and no "..", which curl would follow up and out of this
 # repository's releases.
@@ -512,6 +536,10 @@ if $pull; then
   docker compose pull --quiet </dev/null || {
     put_back
     die "the image could not be fetched; nothing was changed"
+  }
+  image_is_signed || {
+    put_back
+    die "the image's signature does not check out (releases before 0.5.0-beta.3 have none; UWUAUTH_SKIP_VERIFY=1 skips this); nothing was changed"
   }
 fi
 
