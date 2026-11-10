@@ -198,6 +198,20 @@ async fn create(
         policy::display_name(if new.display_name.trim().is_empty() { &username } else { &new.display_name })?;
     let email = new.email.as_deref().filter(|email| !email.trim().is_empty()).map(policy::email).transpose()?;
     let language = policy::language(new.language.as_deref().unwrap_or(state.settings().default_language.code()));
+    // Groups: an admin any; a manager only groups they own.
+    let membership = state.store.membership().await?;
+    let mut groups: Vec<String> = new
+        .groups
+        .into_iter()
+        .filter(|group| is_admin || membership.owners.get(group).is_some_and(|owners| owners.contains(&me.person.id)))
+        .collect();
+    // Making an admin, outright or through a group inside Admins: only an admin, signed in a moment ago.
+    if super::groups::makes_admin(&membership, new.admin, &groups) {
+        if !is_admin {
+            return Err(ApiError::forbidden("Only admins can make admins."));
+        }
+        me.require_fresh()?;
+    }
     let person = state
         .store
         .create_person(NewPerson {
@@ -213,13 +227,6 @@ async fn create(
             managed: new.managed || !is_admin,
         })
         .await?;
-    // Groups: an admin any; a manager only groups they own.
-    let membership = state.store.membership().await?;
-    let mut groups: Vec<String> = new
-        .groups
-        .into_iter()
-        .filter(|group| is_admin || membership.owners.get(group).is_some_and(|owners| owners.contains(&me.person.id)))
-        .collect();
     if new.admin && is_admin {
         groups.push(ADMINS_ID.to_string());
     }

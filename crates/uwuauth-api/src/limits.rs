@@ -107,7 +107,7 @@ impl Limiter<IpAddr> {
 }
 
 /// The address a bucket belongs to: an IPv4 address as it is, an IPv6 address by its /64.
-fn network(ip: IpAddr) -> IpAddr {
+pub fn network(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V4(_) => ip,
         IpAddr::V6(v6) => {

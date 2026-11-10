@@ -294,6 +294,21 @@ async fn an_app_finds_people_the_active_directory_way() {
 }
 
 #[tokio::test]
+async fn a_search_without_pages_keeps_everybody_when_it_asks_for_photos() {
+    let world = world(true, None).await;
+    for number in 0..101 {
+        let name = format!("p{number:03}");
+        world.person(&name, &name).await;
+    }
+    world.service("app", "secret secret").await;
+    let mut client = world.connect();
+    client.bind("cn=app,ou=services,dc=example,dc=com", "secret secret").await;
+    // `search` asserts that the answer is a success, not a size limit.
+    let entries = client.search("(objectClass=person)", &["uid", "jpegPhoto"]).await;
+    assert!(entries.len() >= 101, "{}", entries.len());
+}
+
+#[tokio::test]
 async fn a_long_list_comes_in_pages() {
     let world = world(true, None).await;
     for name in ["a1", "a2", "a3", "a4", "a5"] {
@@ -569,6 +584,27 @@ async fn people_see_themselves_and_their_groups_but_not_everybody() {
     // Nobody else, not even through a filter on a group's members.
     assert!(client.search("(uid=mia)", &[]).await.is_empty());
     assert!(client.search("(memberUid=mia)", &[]).await.is_empty());
+    // Nor through groups inside groups: the in-chain rule asks only about themselves and their groups.
+    assert!(
+        client
+            .search(r"(member:1.2.840.113556.1.4.1941:=uid\3dmia,ou\3dpeople,dc\3dexample,dc\3dcom)", &[])
+            .await
+            .is_empty()
+    );
+    assert!(
+        client
+            .search(r"(memberOf:1.2.840.113556.1.4.1941:=cn\3dsecret,ou\3dgroups,dc\3dexample,dc\3dcom)", &[])
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        client
+            .search(r"(member:1.2.840.113556.1.4.1941:=uid\3dnyu,ou\3dpeople,dc\3dexample,dc\3dcom)", &[])
+            .await
+            .len(),
+        2,
+        "their own groups still answer"
+    );
     client
         .send(
             LdapOp::CompareRequest(LdapCompareRequest {
@@ -613,6 +649,47 @@ async fn a_bound_connection_ends_with_the_person_or_the_account() {
     let (_, done) = app.search_with(BASE, LdapSearchScope::Subtree, "(objectClass=person)", &[], vec![]).await;
     let LdapOp::SearchResultDone(result) = done.op else { panic!() };
     assert_eq!(result.code, LdapResultCode::InsufficentAccessRights, "the account is gone");
+}
+
+#[tokio::test]
+async fn a_bound_connection_ends_with_the_secret_it_bound_with() {
+    let world = world(true, None).await;
+    let nyu = world.person("nyu", "Nyu").await;
+    world.service("nas", "service password").await;
+    let refused = |done: LdapMsg| {
+        let LdapOp::SearchResultDone(result) = done.op else { panic!() };
+        result.code == LdapResultCode::InsufficentAccessRights
+    };
+
+    let mut app = world.connect();
+    app.bind("cn=nas,ou=services,dc=example,dc=com", "service password").await;
+    assert_eq!(app.search("(uid=nyu)", &[]).await.len(), 1);
+    let account = world.state.store.ldap_accounts().await.unwrap().remove(0);
+    world.state.store.renew_ldap_account(&account.id, uwuauth_api::crypto::sha256(b"new")).await.unwrap();
+    let (_, done) = app.search_with(BASE, LdapSearchScope::Subtree, "(uid=nyu)", &[], vec![]).await;
+    assert!(refused(done), "a renewed account password");
+
+    let added =
+        world.state.store.add_app_password(&nyu, "NAS", uwuauth_api::crypto::secret_hash("abcd-efgh-jkmn")).await;
+    let mut client = world.connect();
+    assert_eq!(client.bind("nyu", "abcd-efgh-jkmn").await.code, LdapResultCode::Success);
+    assert_eq!(client.search("(uid=nyu)", &[]).await.len(), 1);
+    world.state.store.remove_app_password(&nyu, &added.unwrap().unwrap().id).await.unwrap();
+    let (_, done) = client.search_with(BASE, LdapSearchScope::Subtree, "(uid=nyu)", &[], vec![]).await;
+    assert!(refused(done), "a removed app password");
+
+    let mut client = world.connect();
+    client.bind("nyu", PASSWORD).await;
+    assert_eq!(client.search("(uid=nyu)", &[]).await.len(), 1);
+    let strict = world
+        .state
+        .store
+        .create_group(GroupFields { name: "strict".into(), ldap_app_passwords_only: true, ..GroupFields::default() })
+        .await
+        .unwrap();
+    world.state.store.add_member(&strict.id, &nyu).await.unwrap();
+    let (_, done) = client.search_with(BASE, LdapSearchScope::Subtree, "(uid=nyu)", &[], vec![]).await;
+    assert!(refused(done), "a group that now wants app passwords");
 }
 
 #[tokio::test]

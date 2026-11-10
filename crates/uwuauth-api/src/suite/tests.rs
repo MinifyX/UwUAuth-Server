@@ -520,6 +520,16 @@ async fn an_admin_sets_up_scim_for_any_app_and_the_task_pushes() {
     assert!(shared.0.lock().tokens.iter().all(|token| token == "from-the-wiki"));
     let now = admin.request("POST", &format!("{path}/sync"), Some(json!({ "all": true }))).await;
     assert_eq!(now.status(), StatusCode::ACCEPTED);
+    // The token the app gave stays with its address; another port is another place.
+    let moved = admin.request("PUT", &path, Some(json!({ "baseUrl": "https://wiki.example.com/scim/v2" }))).await;
+    assert_eq!(json(moved).await["detail"]["field"], "token");
+    let other_port = admin
+        .request("PUT", &path, Some(json!({ "baseUrl": "https://wiki.example.com:8443/scim", "token": "t" })))
+        .await;
+    assert_eq!(json(other_port).await["detail"]["field"], "baseUrl");
+    // An address saved before ports counted stays where it is and can still be changed.
+    admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "launchUrl": "http://127.0.0.1:1/" })).await;
+    admin.ok("PUT", &path, json!({ "baseUrl": format!("{url}/scim/v2"), "userName": "email" })).await;
     admin.ok("DELETE", &path, json!({})).await;
     assert!(server.state.store.scim_target(id).await.unwrap().is_none());
     assert_eq!(admin.request("POST", &format!("{path}/sync"), Some(json!({}))).await.status(), StatusCode::NOT_FOUND);

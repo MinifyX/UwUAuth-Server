@@ -2,7 +2,7 @@
 //! code, the person types it on their phone at `/#/device`, confirms, and the device gets its
 //! tokens by asking `/oauth/token` every few seconds.
 
-use super::authorize::{refusal, strong};
+use super::authorize::{refusal, second_factor_missing};
 use super::{client, form, issuer, oauth_error, open_to_all, scopes};
 use crate::crypto::{b64, random_bytes, random_token, sha256};
 use crate::errors::{ApiError, ApiResult};
@@ -159,19 +159,21 @@ async fn decide(
     let app = state.store.app(&grant.app_id).await?.ok_or_else(ApiError::not_found)?;
     if !decision.approve {
         grant.state = DeviceState::Refused;
-        state.oidc().devices.put(key, grant);
+        state.oidc().devices.replace(&key, grant);
         return Ok(Json(json!({ "approved": false })));
     }
     if let Some(reason) = refusal(&state, &app, &me.person).await? {
         return Err(ApiError::forbidden("You may not use this app now.").with_detail(json!({ "reason": reason })));
     }
     let amr = me.methods();
-    if app.require_mfa && !strong(&amr) {
+    if second_factor_missing(&state, &app, &me.person.id, &amr).await? {
         return Err(ApiError::reauth().with_detail(json!({ "reason": "mfa" })));
     }
     let auth_time = uwuauth_store::clock::parse(&me.session.auth_time).map_or(0, |at| at.unix_timestamp());
     grant.state = DeviceState::Confirmed { person_id: me.person.id.clone(), auth_time, amr };
-    state.oidc().devices.put(key, grant);
+    if !state.oidc().devices.replace(&key, grant) {
+        return Err(ApiError::not_found());
+    }
     audit(
         &state,
         "device_confirmed",

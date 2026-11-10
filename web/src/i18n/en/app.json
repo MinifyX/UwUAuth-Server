@@ -45,6 +45,8 @@
   "Zu viele Versuche auf einmal. Warte kurz und versuch es noch einmal.": "Too many tries at once. Wait a moment and try again.",
   "Bestätige zuerst, dass du es bist.": "Confirm that it's you first.",
   "Der Link wurde schon benutzt oder ist abgelaufen.": "The link was used already or has run out.",
+  "Gerade ist zu viel los. Versuch es gleich noch einmal.": "Too much is going on right now. Try again in a moment.",
+  "Gib das SCIM-Token der App ein – für eine neue Adresse braucht es das noch einmal.": "Enter the app's SCIM token – a new address needs it once more.",
   "Mit dieser Adresse gibt es schon ein Konto.": "There is an account with this address already.",
   "Diesen Benutzernamen gibt es schon.": "That user name is taken.",
   "Den Namen oder die Adresse gibt es schon.": "That name or address is taken.",

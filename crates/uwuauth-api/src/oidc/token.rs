@@ -10,7 +10,7 @@
 //!   sign the person in again. Every refresh checks again that the person may use the app — a
 //!   kid's time window that closed ends the app's access within a quarter of an hour.
 
-use super::authorize::{Code, refusal};
+use super::authorize::{Code, refusal, second_factor_missing};
 use super::claims;
 use super::device::DeviceState;
 use super::keys::{Alg, half_hash};
@@ -239,6 +239,9 @@ async fn code_grant(
     if refusal(state, &client.app, &person).await?.is_some() {
         return Ok(invalid_grant("the person may not use this app now"));
     }
+    if second_factor_missing(state, &client.app, &person.id, &found.amr).await? {
+        return Ok(invalid_grant("this app needs a second factor"));
+    }
     let issued = tokens(
         state,
         Issue {
@@ -318,6 +321,12 @@ async fn refresh_grant(
         state.store.revoke_family(&found.family).await?;
         return Ok(invalid_grant("the person may not use this app now"));
     }
+    let amr: Vec<String> = serde_json::from_str(&found.amr).unwrap_or_default();
+    // The app may have started asking for a second factor after this sign-in.
+    if second_factor_missing(state, &client.app, &person.id, &amr).await? {
+        state.store.revoke_family(&found.family).await?;
+        return Ok(invalid_grant("this app needs a second factor; the app has to sign in again"));
+    }
     let issued = tokens(
         state,
         Issue {
@@ -326,7 +335,7 @@ async fn refresh_grant(
             scopes: asked,
             nonce: None,
             auth_time: found.auth_time,
-            amr: serde_json::from_str(&found.amr).unwrap_or_default(),
+            amr,
             sid: found.sid,
             replaces: Some((hash, found.family)),
             id_token: true,
@@ -375,7 +384,7 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "device_code is missing"));
     };
     let key = b64(&sha256(device_code.as_bytes()));
-    let Some(mut grant) = state.oidc().devices.peek(&key) else {
+    let Some(grant) = state.oidc().devices.peek(&key) else {
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
     };
     if grant.app_id != client.app.id {
@@ -383,14 +392,18 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
     }
     let now = std::time::Instant::now();
     if grant.last_poll.is_some_and(|last| now.duration_since(last).as_secs() < super::device::INTERVAL_SECONDS) {
-        grant.last_poll = Some(now);
-        state.oidc().devices.put(key, grant);
+        // Changed in place: polling does not keep a device code alive past its ten minutes, and
+        // does not undo a yes given in this very moment.
+        if !state.oidc().devices.update(&key, |grant| grant.last_poll = Some(now)) {
+            return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
+        }
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "slow_down", "ask less often"));
     }
-    grant.last_poll = Some(now);
     match grant.state.clone() {
         DeviceState::Waiting => {
-            state.oidc().devices.put(key, grant);
+            if !state.oidc().devices.update(&key, |grant| grant.last_poll = Some(now)) {
+                return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
+            }
             Ok(oauth_error(StatusCode::BAD_REQUEST, "authorization_pending", "the person has not confirmed yet"))
         }
         DeviceState::Refused => {
@@ -407,6 +420,9 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
             };
             if refusal(state, &client.app, &person).await?.is_some() {
                 return Ok(invalid_grant("the person may not use this app now"));
+            }
+            if second_factor_missing(state, &client.app, &person.id, &amr).await? {
+                return Ok(invalid_grant("this app needs a second factor"));
             }
             let issued = tokens(
                 state,

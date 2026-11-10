@@ -36,6 +36,8 @@ const CONNECTIONS: usize = 512;
 const PER_ADDRESS: usize = 64;
 /// At most this many entries per search, whatever the client asks for.
 const MOST: usize = 10_000;
+/// At most this many entries in one answer that carries photos.
+const MOST_PHOTOS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct LdapConfig {
@@ -50,15 +52,22 @@ pub struct LdapConfig {
 #[derive(Debug, Clone)]
 enum Bound {
     Anonymous,
-    /// A person, with their security stamp when they bound, and whether with an app password.
+    /// A person, with their security stamp when they bound, the app password they bound with,
+    /// the time windows they had then, and the directory generation last checked against.
     Person {
         id: String,
         dn: String,
         stamp: String,
-        app_password: bool,
+        app_password: Option<String>,
+        windows: Vec<uwuauth_store::access::Window>,
+        seen: u64,
     },
+    /// An app's account, with the hash of the password it bound with.
     Service {
         dn: String,
+        name: String,
+        hash: Vec<u8>,
+        seen: u64,
     },
 }
 
@@ -223,13 +232,15 @@ impl Ldap {
                 }
             };
             let ip = uwuauth_api::session::canonical(peer.ip());
+            // Counted by network: an IPv6 address by its /64, as the other limits count it.
+            let network = uwuauth_api::limits::network(ip);
             let Ok(permit) = self.connections.clone().try_acquire_owned() else {
                 tracing::warn!(%ip, "too many LDAP connections; refused one");
                 continue;
             };
             {
                 let mut per_address = self.per_address.lock();
-                let count = per_address.entry(ip).or_default();
+                let count = per_address.entry(network).or_default();
                 if *count >= PER_ADDRESS {
                     tracing::warn!(%ip, "too many LDAP connections from one address; refused one");
                     continue;
@@ -239,7 +250,7 @@ impl Ldap {
             let ldap = self.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                let _count = Leaving { ldap: ldap.clone(), ip };
+                let _count = Leaving { ldap: ldap.clone(), ip: network };
                 if ldaps {
                     let Some(acceptor) = ldap.acceptor() else { return };
                     match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(stream)).await {
@@ -294,7 +305,7 @@ impl Ldap {
             };
             // Whoever is bound is looked at again: disabled, a new password, an account gone, and
             // the connection is anonymous from now on.
-            if !self.still_bound(&bound).await {
+            if !self.still_bound(&mut bound).await {
                 bound = Bound::Anonymous;
             }
             let id = message.msgid;
@@ -383,24 +394,60 @@ impl Ldap {
     /// Whether whoever `bound` is may still do what they bound for: a person still active and
     /// with the same security stamp (no new password, not signed out everywhere), an app's
     /// account still there.
-    async fn still_bound(&self, bound: &Bound) -> bool {
+    /// The secret it bound with must still be good too: a renewed account password or a
+    /// removed app password ends the bind, and so does a time window closing. What only the
+    /// store knows is asked again when the directory changed since the last look.
+    async fn still_bound(&self, bound: &mut Bound) -> bool {
         if matches!(bound, Bound::Anonymous) {
             return true;
         }
+        let generation = self.state.store.generation();
         let Ok((snapshot, people)) = self.snapshot().await else { return false };
         match bound {
             Bound::Anonymous => true,
-            Bound::Person { id, stamp, .. } => people.iter().any(|person| {
-                &person.id == id
-                    && &person.security_stamp == stamp
-                    && person.active()
-                    && person.expires.as_deref().is_none_or(|expires| expires > uwuauth_store::clock::now().as_str())
-            }),
-            Bound::Service { dn, .. } => {
+            Bound::Person { id, stamp, app_password, windows, seen, .. } => {
+                let ok = people.iter().any(|person| {
+                    &person.id == id
+                        && &person.security_stamp == stamp
+                        && person.active()
+                        && person
+                            .expires
+                            .as_deref()
+                            .is_none_or(|expires| expires > uwuauth_store::clock::now().as_str())
+                }) && policy::within_windows(&self.state, windows, None);
+                if !ok || *seen == generation {
+                    return ok;
+                }
+                let secret_ok = match app_password {
+                    Some(app) => self
+                        .state
+                        .store
+                        .app_passwords(id)
+                        .await
+                        .is_ok_and(|passwords| passwords.iter().any(|password| &password.id == app)),
+                    None => !self.password_barred(&snapshot, id).await,
+                };
+                *seen = generation;
+                secret_ok
+            }
+            Bound::Service { dn, name, hash, seen } => {
                 let dn = Dn::parse(dn).map(|dn| dn.normalized());
-                snapshot.entries.iter().any(|entry| Some(&entry.normalized) == dn.as_ref())
+                let ok = snapshot.entries.iter().any(|entry| Some(&entry.normalized) == dn.as_ref());
+                if !ok || *seen == generation {
+                    return ok;
+                }
+                *seen = generation;
+                self.state.store.ldap_account_has(name, hash.clone()).await.unwrap_or(false)
             }
         }
+    }
+
+    /// Groups that want app passwords over LDAP, and groups that want a second step (which LDAP
+    /// has no way to ask for), get no bind with the account's password.
+    async fn password_barred(&self, snapshot: &Snapshot, person: &str) -> bool {
+        let of_person = snapshot.membership.groups_of(person);
+        let groups = self.state.store.groups().await.unwrap_or_default();
+        groups.iter().any(|group| (group.ldap_app_passwords_only || group.require_mfa) && of_person.contains(&group.id))
     }
 
     async fn bind(&self, id: i32, request: LdapBindRequest, ip: IpAddr, secure: bool) -> (LdapMsg, Bound) {
@@ -448,17 +495,14 @@ impl Ldap {
             && dn.parent().normalized() == format!("ou=services,{}", self.base.normalized())
             && let Some(first) = dn.first()
         {
-            let found = self
-                .state
-                .store
-                .use_ldap_account(&first.value, sha256(password.as_bytes()), &ip.to_string())
-                .await
-                .ok()
-                .flatten();
+            let seen = self.state.store.generation();
+            let hash = sha256(password.as_bytes());
+            let found =
+                self.state.store.use_ldap_account(&first.value, hash.clone(), &ip.to_string()).await.ok().flatten();
             return match found {
                 Some(account) => {
                     let dn = service_dn(&self.base_text(), &account.name);
-                    (reply(LdapResultCode::Success, ""), Bound::Service { dn })
+                    (reply(LdapResultCode::Success, ""), Bound::Service { dn, name: account.name, hash, seen })
                 }
                 None => {
                     wrong();
@@ -477,6 +521,7 @@ impl Ldap {
             };
         }
 
+        let seen = self.state.store.generation();
         let Ok((snapshot, people)) = self.snapshot().await else {
             return (reply(LdapResultCode::Unavailable, "the directory is not available"), Bound::Anonymous);
         };
@@ -492,14 +537,8 @@ impl Ldap {
         let right = if app_password.is_some() {
             true
         } else {
-            // Groups that want app passwords over LDAP, and groups that want a second step
-            // (which LDAP has no way to ask for), get no bind with the account's password.
-            let of_person = snapshot.membership.groups_of(&person.id);
-            let groups = self.state.store.groups().await.unwrap_or_default();
-            let app_passwords_only = groups
-                .iter()
-                .any(|group| (group.ldap_app_passwords_only || group.require_mfa) && of_person.contains(&group.id));
-            let hash = person.password_hash.as_deref().filter(|_| !app_passwords_only);
+            let barred = self.password_barred(&snapshot, &person.id).await;
+            let hash = person.password_hash.as_deref().filter(|_| !barred);
             verify_password(self.state.config.hash_cost, hash, &password).await
         };
         if !right {
@@ -571,8 +610,14 @@ impl Ldap {
         )
         .await;
         let dn = person_dn(&self.base_text(), &person.username);
-        let bound =
-            Bound::Person { id: person.id, dn, stamp: person.security_stamp, app_password: app_password.is_some() };
+        let bound = Bound::Person {
+            id: person.id,
+            dn,
+            stamp: person.security_stamp,
+            app_password: app_password.map(|app| app.id),
+            windows,
+            seen,
+        };
         (reply(LdapResultCode::Success, ""), bound)
     }
 
@@ -684,7 +729,7 @@ impl Ldap {
             let filter = request.filter.clone();
             let scope = request.scope.clone();
             tokio::task::spawn_blocking(move || {
-                let mut nested = Nested::default();
+                let mut nested = Nested::for_caller(&sees);
                 let in_scope = |entry: &Entry| match scope {
                     LdapSearchScope::Base => entry.normalized == base_normalized,
                     LdapSearchScope::OneLevel => {
@@ -725,6 +770,9 @@ impl Ldap {
         let limit = usize::try_from(request.sizelimit).ok().filter(|limit| *limit > 0).unwrap_or(MOST).min(MOST);
         let asked: Vec<String> = request.attrs.iter().map(|name| name.to_lowercase()).collect();
         let photos = asked.iter().any(|name| PHOTOS.contains(&name.as_str()));
+        // A page with photos is held in memory whole: fewer entries then, the rest on the next page.
+        // A search without pages keeps all its entries, and only the first ones get their photo.
+        let limit = if photos && paged.is_some() { limit.min(MOST_PHOTOS) } else { limit };
         let on_page: Vec<usize> = found.iter().skip(start).take(page.min(limit)).copied().collect();
         // Photos only when asked for by name, fetched then for the whole page at once: they are
         // big, and most searches never want them.
@@ -735,6 +783,7 @@ impl Ldap {
                     Kind::Person(person) => Some(person.clone()),
                     _ => None,
                 })
+                .take(MOST_PHOTOS)
                 .collect();
             self.state.store.avatars_of(people).await.unwrap_or_default()
         } else {
@@ -861,7 +910,7 @@ impl Ldap {
         let Bound::Person { id: person, stamp, app_password, .. } = bound else {
             return result(LdapResultCode::InsufficentAccessRights, "only a person changes their own password");
         };
-        if *app_password {
+        if app_password.is_some() {
             return result(
                 LdapResultCode::InsufficentAccessRights,
                 "bound with an app password: the password is changed in UwUAuth's portal",

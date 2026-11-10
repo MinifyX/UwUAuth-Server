@@ -17,6 +17,8 @@ pub fn restore(backup: &Path, database: &Path, aside: &Path) -> Result<(), Strin
     let found = |error: rusqlite::Error| format!("{}: {error}", backup.display());
     {
         let conn = Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(found)?;
+        // Nothing in the file runs while it is looked at.
+        conn.pragma_update(None, "trusted_schema", "OFF").map_err(found)?;
         let check: String = conn
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .map_err(|_| format!("{} is not a database", backup.display()))?;
@@ -29,7 +31,17 @@ pub fn restore(backup: &Path, database: &Path, aside: &Path) -> Result<(), Strin
                 row.get(0)
             })
             .map_err(found)?;
-        if version < 1 || ours != 1 {
+        // Our schema has no triggers, views or virtual tables: a file with them would run its
+        // own SQL in the server once it is in place.
+        let foreign: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type IN ('trigger', 'view') \
+                 OR (type = 'table' AND sql LIKE 'CREATE VIRTUAL%')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(found)?;
+        if version < 1 || ours != 1 || foreign != 0 {
             return Err(format!("{} is not a UwUAuth Server database", backup.display()));
         }
         if version > SCHEMA_VERSION {
@@ -63,6 +75,7 @@ pub fn restore(backup: &Path, database: &Path, aside: &Path) -> Result<(), Strin
     let incoming = with_suffix(database, "-restoring");
     let _ = std::fs::remove_file(&incoming);
     let prepared = Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|conn| conn.pragma_update(None, "trusted_schema", "OFF").map(|_| conn))
         .and_then(|conn| conn.execute("VACUUM INTO ?1", [incoming.to_string_lossy().as_ref()]).map(drop));
     if let Err(error) = prepared {
         let _ = std::fs::remove_file(&incoming);
@@ -148,6 +161,18 @@ mod tests {
         let other = dir.path().join("other.db");
         Connection::open(&other).unwrap().execute_batch("CREATE TABLE t (x); PRAGMA user_version = 1;").unwrap();
         let error = restore(&other, &dir.path().join("uwuauth.db"), &dir.path().join("aside.db")).unwrap_err();
+        assert!(error.contains("not a UwUAuth Server database"), "{error}");
+
+        // One of ours, but with SQL of its own in it.
+        let rigged = dir.path().join("rigged.db");
+        let conn = Connection::open(&rigged).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server (key TEXT PRIMARY KEY, value TEXT); PRAGMA user_version = 1; \
+             CREATE TRIGGER t AFTER INSERT ON server BEGIN DELETE FROM server; END;",
+        )
+        .unwrap();
+        drop(conn);
+        let error = restore(&rigged, &dir.path().join("uwuauth.db"), &dir.path().join("aside.db")).unwrap_err();
         assert!(error.contains("not a UwUAuth Server database"), "{error}");
 
         let text = dir.path().join("notes.txt");

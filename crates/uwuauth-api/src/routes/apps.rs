@@ -433,6 +433,19 @@ async fn change(
         None => current.name.clone(),
     };
     let disabled = change.disabled.unwrap_or(current.disabled);
+    // Where tokens and people go, and whether people are asked: worth a recent sign-in.
+    let differs = |given: &Option<String>, now: &Option<String>| {
+        given.as_ref().is_some_and(|given| given.as_str() != now.as_deref().unwrap_or(""))
+    };
+    let powerful = change.redirect_uris.as_ref().is_some_and(|uris| *uris != current.redirect_uris)
+        || change.post_logout_redirect_uris.as_ref().is_some_and(|uris| *uris != current.post_logout_redirect_uris)
+        || differs(&change.backchannel_logout_uri, &current.backchannel_logout_uri)
+        || differs(&change.launch_url, &current.launch_url)
+        || change.consent.is_some_and(|consent| consent != current.consent)
+        || change.forward_auth.as_ref().is_some_and(|guarded| *guarded != current.forward_auth);
+    if let (true, AdminOnly::Person(me)) = (powerful, &admin) {
+        me.require_fresh()?;
+    }
     let checked = fields(&state, current.clone(), merged(&current, change, public)).await?;
     let updated = state
         .store

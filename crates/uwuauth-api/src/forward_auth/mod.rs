@@ -26,7 +26,7 @@ mod flows;
 
 use crate::errors::ApiResult;
 use crate::memory::Expiring;
-use crate::oidc::authorize::{refusal, strong};
+use crate::oidc::authorize::{refusal, second_factor_missing};
 use crate::session::{ClientIp, Me, from_headers, from_session_id, set_cookie, with_cookies};
 use crate::{AppState, audit};
 use axum::Router;
@@ -486,7 +486,7 @@ async fn answer_for(state: &AppState, app: &App, me: &Me, ip: IpAddr) -> ApiResu
     if let Some(reason) = refusal(state, app, &me.person).await? {
         return Ok(Answer::Deny(reason));
     }
-    if app.require_mfa && !strong(&me.methods()) {
+    if second_factor_missing(state, app, &me.person.id, &me.methods()).await? {
         return Ok(Answer::Mfa);
     }
     let membership = state.store.membership().await?;

@@ -318,8 +318,8 @@ pub async fn push(state: &AppState, app_id: &str) -> ApiResult<Pushed> {
     Ok(pushed)
 }
 
-/// The hosts an app was given: where people are sent back to, where it is launched, where it
-/// takes logouts and what forward auth guards for it.
+/// The hosts (with their ports) an app was given: where people are sent back to, where it is
+/// launched, where it takes logouts and what forward auth guards for it.
 fn hosts_of(app: &uwuauth_store::App) -> BTreeSet<String> {
     let uris = app
         .redirect_uris
@@ -329,15 +329,24 @@ fn hosts_of(app: &uwuauth_store::App) -> BTreeSet<String> {
         .chain(&app.launch_url)
         .cloned()
         .chain(app.forward_auth.iter().map(|guarded| format!("https://{guarded}")));
-    uris.filter_map(|uri| url::Url::parse(&uri).ok()?.host_str().map(str::to_ascii_lowercase)).collect()
+    uris.filter_map(|uri| host_port(&uri)).collect()
+}
+
+/// `host:port` of an address, the port filled in for its scheme.
+fn host_port(uri: &str) -> Option<String> {
+    let url = url::Url::parse(uri).ok()?;
+    Some(format!("{}:{}", url.host_str()?.to_ascii_lowercase(), url.port_or_known_default()?))
 }
 
 /// Whether SCIM may go to `base_url` for this app: `https` on one of its own hosts, or plain
-/// `http` when that host is this machine.
-fn pinned(base_url: &str, app: &uwuauth_store::App) -> Result<(), String> {
+/// `http` when that host is this machine. With `port`, on one of its own ports too: asked of an
+/// address somebody sets, not of one that was saved before ports counted and still gets its pushes.
+fn pinned(base_url: &str, app: &uwuauth_store::App, port: bool) -> Result<(), String> {
     let hosts = hosts_of(app);
+    let name = |host: &str| host.rsplit_once(':').map(|(name, _)| name.to_string());
     let ok = url::Url::parse(base_url).is_ok_and(|url| {
-        url.host_str().is_some_and(|host| hosts.contains(&host.to_ascii_lowercase()))
+        host_port(base_url)
+            .is_some_and(|host| hosts.contains(&host) || (!port && hosts.iter().any(|own| name(own) == name(&host))))
             && match url.scheme() {
                 "https" => true,
                 "http" => super::loopback(&url),
@@ -357,7 +366,7 @@ fn pinned(base_url: &str, app: &uwuauth_store::App) -> Result<(), String> {
 }
 
 fn open(state: &AppState, app: &uwuauth_store::App, target: &ScimTarget) -> Result<Endpoint, String> {
-    pinned(&target.base_url, app)?;
+    pinned(&target.base_url, app, false)?;
     let token = state
         .sealer
         .open(&target.token)
@@ -683,6 +692,9 @@ pub(crate) async fn set_up(
     Path(id): Path<String>,
     Json(body): Json<SetUp>,
 ) -> ApiResult<Json<Value>> {
+    if let AdminOnly::Person(me) = &admin {
+        me.require_fresh()?;
+    }
     let app = state.store.app(&id).await?.ok_or_else(ApiError::not_found)?;
     let before = state.store.scim_target(&id).await?;
     let base_url = body.base_url.trim().trim_end_matches('/').to_string();
@@ -700,7 +712,9 @@ pub(crate) async fn set_up(
             "The SCIM address is an http(s) address without anything after it.",
         ));
     }
-    if let Err(error) = pinned(&base_url, &app) {
+    // An address that stays where it was saved keeps working, whatever its port.
+    let moved = before.as_ref().is_none_or(|before| host_port(&before.base_url) != host_port(&base_url));
+    if let Err(error) = pinned(&base_url, &app, moved) {
         let mut letters = error.chars();
         let first = letters.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default();
         return Err(ApiError::field("baseUrl", "uri", format!("{first}{}.", letters.as_str())));
@@ -708,7 +722,11 @@ pub(crate) async fn set_up(
     let token = match (body.token.as_deref().map(str::trim).filter(|token| !token.is_empty()), &before) {
         (Some(token), _) if token.len() <= 4096 => state.sealer.seal(token.as_bytes()),
         (Some(_), _) => return Err(ApiError::field("token", "invalid", "That token is far too long.")),
-        (None, Some(before)) => before.token.clone(),
+        // The token the app gave goes nowhere else than where it was meant for.
+        (None, Some(before)) if host_port(&before.base_url) == host_port(&base_url) => before.token.clone(),
+        (None, Some(_)) => {
+            return Err(ApiError::field("token", "required", "A new SCIM address needs the app's token again."));
+        }
         (None, None) => return Err(ApiError::field("token", "required", "The app's SCIM token is needed.")),
     };
     let resources = body.resources.unwrap_or_else(|| {

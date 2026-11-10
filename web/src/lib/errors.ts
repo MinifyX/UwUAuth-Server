@@ -41,6 +41,8 @@ export function errorText(error: unknown): string {
       );
     case 'cancelled':
       return t('Abgebrochen.');
+    case 'temporarily_unavailable':
+      return t('Gerade ist zu viel los. Versuch es gleich noch einmal.');
     case 'link_gone':
       return t('Der Link wurde schon benutzt oder ist abgelaufen.');
     case 'exists':

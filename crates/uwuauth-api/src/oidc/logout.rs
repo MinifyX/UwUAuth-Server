@@ -16,7 +16,7 @@ use crate::errors::{ApiError, ApiResult};
 use crate::session::{ClientIp, SESSION_COOKIE, cookie, from_headers, set_cookie, with_cookies};
 use crate::{AppState, audit};
 use axum::extract::{Form, Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
 use axum::{Json, Router};
@@ -79,7 +79,7 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params) 
         (id_token && aud.is_some() && same_app).then_some(claims)
     });
     let app = match hint.as_ref().and_then(|claims| claims.get("aud")).and_then(Value::as_str) {
-        Some(id) => state.store.app_by_client_id(id).await?,
+        Some(id) => state.store.app_by_client_id(id).await?.filter(|app| !app.disabled),
         None => None,
     };
     // Back to the app only with a hint: otherwise any link could send people through here to
@@ -104,7 +104,13 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params) 
         return Ok(with_cookies(Redirect::to(&to).into_response(), vec![clear, crate::forward_auth::clear(state)]));
     }
     let id = random_token(18);
-    state.oidc().logouts.put(id.clone(), LogoutRequest { redirect, app: app.map(|app| app.name) });
+    if !state.oidc().logouts.put(id.clone(), LogoutRequest { redirect, app: app.map(|app| app.name) }) {
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "temporarily_unavailable",
+            "too many sign-outs are waiting, try later",
+        ));
+    }
     Ok(Redirect::to(&format!("{}/#/logout?request={id}", state.config.public)).into_response())
 }
 
@@ -253,16 +259,29 @@ pub fn public_ip(ip: std::net::IpAddr) -> bool {
                 || ip.is_broadcast()
                 || ip.is_multicast()
                 || ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64
-                || ip.octets()[0] == 0)
+                || ip.octets()[0] == 0
+                || ip.octets()[0] >= 240
+                || ip.octets()[0] == 198 && (ip.octets()[1] & 0xfe) == 18
+                || ip.octets()[..3] == [192, 0, 0])
         }
         std::net::IpAddr::V6(ip) => {
-            let first = ip.segments()[0];
+            let s = ip.segments();
+            let v4 = |high: u16, low: u16| std::net::IpAddr::V4(((u32::from(high) << 16) | u32::from(low)).into());
+            // Addresses that carry an IPv4 address go wherever that one goes.
+            let embedded = match s {
+                [0, 0, 0, 0, 0, 0xffff, high, low] | [0, 0, 0, 0, 0, 0, high, low] => Some(v4(high, low)),
+                [0x64, 0xff9b, 0, 0, 0, 0, high, low] => Some(v4(high, low)),
+                [0x2002, high, low, ..] => Some(v4(high, low)),
+                _ => None,
+            };
             !(ip.is_loopback()
                 || ip.is_unspecified()
                 || ip.is_multicast()
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-                || ip.to_ipv4_mapped().is_some_and(|v4| !public_ip(std::net::IpAddr::V4(v4))))
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                || (s[0] & 0xffc0) == 0xfec0
+                || s[..3] == [0x64, 0xff9b, 1]
+                || embedded.is_some_and(|v4| !public_ip(v4)))
         }
     }
 }
@@ -332,10 +351,18 @@ mod tests {
             "fe80::1",
             "::ffff:10.0.0.1",
             "0.0.0.0",
+            "240.0.0.1",
+            "198.18.0.1",
+            "192.0.0.8",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::1",
+            "2002:7f00:1::1",
+            "::10.0.0.1",
+            "fec0::1",
         ] {
             assert!(!super::public_ip(private.parse().unwrap()), "{private}");
         }
-        for public in ["192.0.2.1", "2001:db8::1"] {
+        for public in ["192.0.2.1", "2001:db8::1", "64:ff9b::c000:201", "2002:c000:201::1"] {
             assert!(super::public_ip(public.parse().unwrap()), "{public}");
         }
     }

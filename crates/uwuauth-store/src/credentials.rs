@@ -229,7 +229,7 @@ impl Store {
 
     pub async fn remove_app_password(&self, person: &str, id: &str) -> Result<bool> {
         let (person, id) = (person.to_string(), id.to_string());
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("DELETE FROM app_passwords WHERE id = ?1 AND person_id = ?2", params![id, person])
                 .map(|n| n == 1)
         })

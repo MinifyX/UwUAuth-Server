@@ -59,6 +59,9 @@ async fn create(
     me.require_fresh()?;
     let name = crate::policy::optional(Some(&new.name), 80)
         .ok_or_else(|| ApiError::field("name", "required", "A name is needed."))?;
+    if new.days.is_some_and(|days| days > 3650) {
+        return Err(ApiError::field("days", "invalid", "A token lasts at most ten years."));
+    }
     let secret = format!("{PREFIX}{}", random_token(32));
     let expires = new.days.filter(|days| *days > 0).map(|days| clock::in_seconds(i64::from(days) * 86_400));
     let token =
