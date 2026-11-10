@@ -194,7 +194,8 @@ jobs:
         # A release is built from nothing any earlier run left behind.
         if: github.ref_type != 'tag'
         with:
-          key: release
+          # The image is in the key: what one image's compiler built is not for another.
+          key: release-ubuntu-24.04
       - name: Build amd64
         run: cargo build --release --locked --target x86_64-unknown-linux-gnu -p uwuauth-server
       - name: Build arm64
