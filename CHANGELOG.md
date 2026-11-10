@@ -3,6 +3,16 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.4
+
+**0.5.0-beta.3 did not start on processors without AVX; this one does.** The amd64 image of
+0.5.0-beta.3 was built with a compiler that used AVX on its own, and the server ended with
+"illegal instruction" as soon as it opened its database, for instance in a VM with QEMU's plain
+CPU. `update.sh` put the version from before back by itself, so nothing was lost. The image is
+built as before again, and CI now starts it on a processor from 2008.
+
+Everything else is what 0.5.0-beta.3 brought, below.
+
 ## 0.5.0-beta.3
 
 **A new look, and a security audit with everything it found fixed.**

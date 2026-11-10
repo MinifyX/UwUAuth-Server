@@ -167,7 +167,10 @@ jobs:
   binaries:
     name: Binaries
     needs: [test, scripts, web]
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: the compiler of ubuntu-26.04 builds for x86-64-v3 (AVX) by itself, its own
+    # libraries too, and 0.5.0-beta.3 died with an illegal instruction on a VM with a plain QEMU
+    # CPU. The check under "Collect them" says when a newer image is fine.
+    runs-on: ubuntu-24.04
     env:
       # The server knows its commit and, for a release, checks for newer releases instead of
       # newer commits.
@@ -185,13 +188,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
-      - name: Cross compiler for arm64
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Cross compiler for arm64, and an emulator to try the amd64 binary on an old CPU
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         # A release is built from nothing any earlier run left behind.
         if: github.ref_type != 'tag'
         with:
-          key: release
+          # The image is in the key: what one image's compiler built is not for another.
+          key: release-ubuntu-24.04
       - name: Build amd64
         run: cargo build --release --locked --target x86_64-unknown-linux-gnu -p uwuauth-server
       - name: Build arm64
@@ -206,6 +210,9 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/uwuauth-server dist/amd64/
           cp target/aarch64-unknown-linux-gnu/release/uwuauth-server dist/arm64/
           dist/amd64/uwuauth-server --version
+          # It opens a database on a CPU without AVX (Nehalem, 2008): an invitation needs the store.
+          UWUAUTH_DATA="$(mktemp -d)" UWUAUTH_PUBLIC=https://auth.example.com \
+            qemu-x86_64 -cpu Nehalem dist/amd64/uwuauth-server invite | grep -q 'auth.example.com/#/invite'
           file dist/arm64/uwuauth-server | grep -q aarch64
           # Both carry the web app: a binary without it would serve and simply have none.
           for arch in amd64 arm64; do grep -q 'assets/index-.*\.js' "dist/$arch/uwuauth-server"; done
