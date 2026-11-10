@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { t, useLanguage } from '../lib/i18n';
 import { useToast } from '../lib/toast';
 import { Icon, type IconName } from './Icon';
@@ -29,8 +29,10 @@ export function Frame({
   return (
     <div className="shell">
       <header className="topbar">
-        <a className="topbar-brand" href="/" aria-label="UwUAuth">
-          <Nyu size={26} blink={false} title="UwUAuth" />
+        <a className="topbar-brand" href="/">
+          <span aria-hidden="true">
+            <Nyu size={26} blink={false} />
+          </span>
           <span className="wordmark">
             <span>UwU</span>Auth
           </span>
@@ -69,11 +71,20 @@ export function Layout({
 }) {
   useLanguage();
   const [open, setOpen] = useState(false);
+  const navId = useId();
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const nav = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!open) return;
+    const button = menuButton.current;
+    // The drawer is modal: focus goes in when it opens and back to the button when it closes.
+    nav.current?.querySelector<HTMLElement>('[aria-current], button')?.focus();
     const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      button?.focus();
+    };
   }, [open]);
   const here = items.find((item) => item.path === current);
   return (
@@ -82,8 +93,10 @@ export function Layout({
         <button
           type="button"
           className="icon-button"
-          aria-label={label}
+          ref={menuButton}
+          aria-label={t('Menü')}
           aria-expanded={open}
+          aria-controls={navId}
           onClick={() => setOpen(!open)}
         >
           <Icon name="menu" size={20} />
@@ -91,11 +104,17 @@ export function Layout({
         {here && <span>{t(here.label)}</span>}
       </div>
       <div className="nav-veil" data-open={open || undefined} onClick={() => setOpen(false)} />
-      <nav className="side-nav" aria-label={label} data-open={open || undefined}>
+      <nav
+        ref={nav}
+        id={navId}
+        className="side-nav"
+        aria-label={label}
+        data-open={open || undefined}
+      >
         {items.map((item, at) => (
           <Fragment key={item.path}>
             {item.group && item.group !== items[at - 1]?.group && (
-              <p className="nav-group">{t(item.group)}</p>
+              <h2 className="nav-group">{t(item.group)}</h2>
             )}
             <button
               type="button"
@@ -113,7 +132,9 @@ export function Layout({
         <span className="spacer" />
         {foot}
       </nav>
-      <section className="page">{children}</section>
+      <section className="page" inert={open}>
+        {children}
+      </section>
     </div>
   );
 }

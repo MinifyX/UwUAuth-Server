@@ -38,13 +38,23 @@ export function Segmented<T extends string | number>({
 }) {
   return (
     <div className={wide ? 'segmented wide' : 'segmented'} role="radiogroup" aria-label={label}>
-      {options.map((option) => (
+      {options.map((option, at) => (
         <button
           key={String(option.value)}
           type="button"
           role="radio"
           aria-checked={option.value === value}
+          // One tab stop for the group; the arrow keys choose, as with native radio buttons.
+          tabIndex={option.value === value ? 0 : -1}
           onClick={() => onChange(option.value)}
+          onKeyDown={(event) => {
+            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+            if (!step) return;
+            event.preventDefault();
+            const next = (at + step + options.length) % options.length;
+            onChange(options[next]!.value);
+            (event.currentTarget.parentElement?.children[next] as HTMLElement).focus();
+          }}
         >
           {option.label}
         </button>

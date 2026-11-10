@@ -33,7 +33,9 @@ a {
 
 /* The ring has to win over a control's own shadow (primary button, chosen segment). */
 :focus-visible {
-  outline: none;
+  /* Forced colours drop shadows; the transparent outline becomes the ring there. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--uwu-focus) !important;
 }
 
@@ -1143,7 +1145,7 @@ button.danger-text {
 
 /* ── Fingers ───────────────────────────────────────────── */
 
-@media (pointer: coarse) {
+@media (any-pointer: coarse) {
   button,
   .button-link,
   .topbar-link,
@@ -1192,6 +1194,11 @@ button.danger-text {
     box-shadow: var(--uwu-shadow-float);
     visibility: hidden;
     translate: -100% 0;
+    overscroll-behavior: contain;
+  }
+
+  .stage:has(.side-nav[data-open]) {
+    overflow: hidden;
   }
 
   .side-nav[data-open] {

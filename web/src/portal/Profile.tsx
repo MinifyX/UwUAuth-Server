@@ -7,7 +7,7 @@ import { Icon } from '../components/Icon';
 import { PageTitle } from '../components/Shell';
 import { api } from '../lib/api';
 import { squareJpeg } from '../lib/avatar';
-import { setLanguage, t, useLanguage } from '../lib/i18n';
+import { language, setLanguage, t, useLanguage } from '../lib/i18n';
 import { patchMe, reloadMe } from '../lib/me';
 import { setLook, useLook } from '../lib/appearance';
 import { toast } from '../lib/toast';
@@ -88,7 +88,7 @@ export function Profile({ me }: { me: Me }) {
             onChange={(textSize) => setLook({ textSize })}
             options={TEXT_SIZE_CHOICES.map((value) => ({
               value,
-              label: TEXT_SIZE_LABELS[me.language === 'en' ? 'en' : 'de'][value],
+              label: TEXT_SIZE_LABELS[language()][value],
             }))}
           />
         </Row>
