@@ -26,20 +26,24 @@ import { Setup } from './Setup';
 import { Tokens } from './Tokens';
 import { Transfer } from './Transfer';
 
+const PEOPLE = N_('Verzeichnis');
+const CONNECT = N_('Anbindung');
+const SERVER = N_('Server');
+
 const PAGES: NavItem[] = [
   { path: '/', label: N_('Übersicht'), icon: 'house' },
-  { path: '/people', label: N_('Personen'), icon: 'user' },
-  { path: '/groups', label: N_('Gruppen'), icon: 'users' },
-  { path: '/invitations', label: N_('Einladungen'), icon: 'sparkles' },
-  { path: '/apps', label: N_('Apps'), icon: 'grid' },
-  { path: '/attributes', label: N_('Zusätzliche Felder'), icon: 'tag' },
-  { path: '/ldap', label: N_('LDAP'), icon: 'network' },
-  { path: '/settings', label: N_('Einstellungen'), icon: 'building' },
-  { path: '/events', label: N_('Ereignisse'), icon: 'history' },
-  { path: '/logs', label: N_('Log'), icon: 'terminal' },
-  { path: '/backups', label: N_('Backups'), icon: 'drive' },
-  { path: '/tokens', label: N_('API-Tokens'), icon: 'code' },
-  { path: '/transfer', label: N_('Import & Export'), icon: 'swap' },
+  { path: '/people', label: N_('Personen'), icon: 'user', group: PEOPLE },
+  { path: '/groups', label: N_('Gruppen'), icon: 'users', group: PEOPLE },
+  { path: '/invitations', label: N_('Einladungen'), icon: 'sparkles', group: PEOPLE },
+  { path: '/attributes', label: N_('Zusätzliche Felder'), icon: 'tag', group: PEOPLE },
+  { path: '/apps', label: N_('Apps'), icon: 'grid', group: CONNECT },
+  { path: '/ldap', label: N_('LDAP'), icon: 'network', group: CONNECT },
+  { path: '/tokens', label: N_('API-Tokens'), icon: 'code', group: CONNECT },
+  { path: '/settings', label: N_('Einstellungen'), icon: 'settings', group: SERVER },
+  { path: '/events', label: N_('Ereignisse'), icon: 'history', group: SERVER },
+  { path: '/logs', label: N_('Log'), icon: 'terminal', group: SERVER },
+  { path: '/backups', label: N_('Backups'), icon: 'drive', group: SERVER },
+  { path: '/transfer', label: N_('Import & Export'), icon: 'swap', group: SERVER },
 ];
 
 /**

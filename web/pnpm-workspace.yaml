@@ -1,0 +1,4 @@
+# @uwusuite/design comes as a GitHub release tarball, not from npm, so pnpm's
+# minimumReleaseAge check cannot look it up there and fails a fresh install.
+minimumReleaseAgeExclude:
+  - '@uwusuite/design'

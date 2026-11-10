@@ -1,3 +1,4 @@
+import { TEXT_SIZE_CHOICES, TEXT_SIZE_LABELS } from '@uwusuite/design';
 import { useRef, useState, type FormEvent } from 'react';
 import { Avatar, Badge } from '../components/bits';
 import { AttributeInput } from '../components/AttributeInput';
@@ -6,16 +7,16 @@ import { Icon } from '../components/Icon';
 import { PageTitle } from '../components/Shell';
 import { api } from '../lib/api';
 import { squareJpeg } from '../lib/avatar';
-import { setLanguage, t, useLanguage } from '../lib/i18n';
+import { language, setLanguage, t, useLanguage } from '../lib/i18n';
 import { patchMe, reloadMe } from '../lib/me';
-import { setTheme, useTheme } from '../lib/theme';
+import { setLook, useLook } from '../lib/appearance';
 import { toast } from '../lib/toast';
 import type { Me } from '../lib/types';
 
 /** One's own name, picture, address, language and look. */
 export function Profile({ me }: { me: Me }) {
   useLanguage();
-  const theme = useTheme();
+  const look = useLook();
   const [run, busy] = useAction();
   return (
     <>
@@ -23,7 +24,7 @@ export function Profile({ me }: { me: Me }) {
       <PictureSection me={me} />
       <NameSection me={me} />
       <EmailSection me={me} />
-      <Section title={t('Sprache und Aussehen')}>
+      <Section title={t('Sprache')}>
         <Row label={t('Sprache')} description={t('Für diese Seiten und für Mails an dich.')}>
           <Segmented
             label={t('Sprache')}
@@ -41,19 +42,56 @@ export function Profile({ me }: { me: Me }) {
             ]}
           />
         </Row>
-        <Row label={t('Aussehen')} description={t('Gilt nur in diesem Browser.')}>
+        {busy && <span className="sr-only">{t('Speichert …')}</span>}
+      </Section>
+      <Section title={t('Darstellung')} lead={t('Gilt nur in diesem Browser.')}>
+        <Row label={t('Design')}>
           <Segmented
-            label={t('Aussehen')}
-            value={theme}
-            onChange={setTheme}
+            label={t('Design')}
+            value={look.theme}
+            onChange={(theme) => setLook({ theme })}
             options={[
-              { value: 'system', label: t('Wie das System') },
+              { value: 'system', label: t('System') },
               { value: 'light', label: t('Hell') },
               { value: 'dark', label: t('Dunkel') },
             ]}
           />
         </Row>
-        {busy && <span className="sr-only">{t('Speichert …')}</span>}
+        <Row label={t('Kontrast')} description={t('Kräftigere Linien und Schrift.')}>
+          <Segmented
+            label={t('Kontrast')}
+            value={look.contrast}
+            onChange={(contrast) => setLook({ contrast })}
+            options={[
+              { value: 'system', label: t('System') },
+              { value: 'normal', label: t('Normal') },
+              { value: 'high', label: t('Hoch') },
+            ]}
+          />
+        </Row>
+        <Row label={t('Animationen')}>
+          <Segmented
+            label={t('Animationen')}
+            value={look.motion}
+            onChange={(motion) => setLook({ motion })}
+            options={[
+              { value: 'system', label: t('System') },
+              { value: 'on', label: t('An') },
+              { value: 'off', label: t('Aus') },
+            ]}
+          />
+        </Row>
+        <Row label={t('Textgröße')}>
+          <Segmented
+            label={t('Textgröße')}
+            value={look.textSize}
+            onChange={(textSize) => setLook({ textSize })}
+            options={TEXT_SIZE_CHOICES.map((value) => ({
+              value,
+              label: TEXT_SIZE_LABELS[language()][value],
+            }))}
+          />
+        </Row>
       </Section>
       {me.attributes.length > 0 && <AttributesSection me={me} />}
     </>

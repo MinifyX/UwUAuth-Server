@@ -173,7 +173,7 @@ function GroupPage({ id, me }: { id: string; me: Me }) {
 
   const back = (
     <button type="button" className="back-button quiet" onClick={() => go('/groups')}>
-      <Icon name="chevron" size={15} />
+      <Icon name="back" size={16} />
       {t('Alle Gruppen')}
     </button>
   );

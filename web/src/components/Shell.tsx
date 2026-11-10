@@ -1,11 +1,12 @@
-import { type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { t, useLanguage } from '../lib/i18n';
 import { useToast } from '../lib/toast';
 import { Icon, type IconName } from './Icon';
 import { Nyu } from './nyu/Nyu';
 import { ReauthHost } from './ReauthHost';
 
-export type NavItem = { path: string; label: string; icon: IconName };
+/** `group` is the heading the page stands under; pages of one group follow each other. */
+export type NavItem = { path: string; label: string; icon: IconName; group?: string };
 
 /**
  * The frame around every page: the bar with Nyu and the name, and what goes on top of
@@ -28,8 +29,10 @@ export function Frame({
   return (
     <div className="shell">
       <header className="topbar">
-        <a className="topbar-brand" href="/" aria-label="UwUAuth">
-          <Nyu size={26} blink={false} title="UwUAuth" />
+        <a className="topbar-brand" href="/">
+          <span aria-hidden="true">
+            <Nyu size={26} blink={false} />
+          </span>
           <span className="wordmark">
             <span>UwU</span>Auth
           </span>
@@ -50,7 +53,7 @@ export function Frame({
   );
 }
 
-/** A side list of pages on a wide screen, a row to swipe along on a phone. */
+/** A side list of pages on a wide screen; below 1024px a drawer behind a menu button. */
 export function Layout({
   items,
   current,
@@ -67,24 +70,71 @@ export function Layout({
   children: ReactNode;
 }) {
   useLanguage();
+  const [open, setOpen] = useState(false);
+  const navId = useId();
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const nav = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const button = menuButton.current;
+    // The drawer is modal: focus goes in when it opens and back to the button when it closes.
+    nav.current?.querySelector<HTMLElement>('[aria-current], button')?.focus();
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      button?.focus();
+    };
+  }, [open]);
+  const here = items.find((item) => item.path === current);
   return (
     <div className="layout">
-      <nav className="side-nav" aria-label={label}>
-        {items.map((item) => (
-          <button
-            key={item.path}
-            type="button"
-            aria-current={item.path === current ? 'page' : undefined}
-            onClick={() => onGo(item.path)}
-          >
-            <Icon name={item.icon} size={17} />
-            <span>{t(item.label)}</span>
-          </button>
+      <div className="nav-bar">
+        <button
+          type="button"
+          className="icon-button"
+          ref={menuButton}
+          aria-label={t('Menü')}
+          aria-expanded={open}
+          aria-controls={navId}
+          onClick={() => setOpen(!open)}
+        >
+          <Icon name="menu" size={20} />
+        </button>
+        {here && <span>{t(here.label)}</span>}
+      </div>
+      <div className="nav-veil" data-open={open || undefined} onClick={() => setOpen(false)} />
+      <nav
+        ref={nav}
+        id={navId}
+        className="side-nav"
+        aria-label={label}
+        data-open={open || undefined}
+      >
+        {items.map((item, at) => (
+          <Fragment key={item.path}>
+            {item.group && item.group !== items[at - 1]?.group && (
+              <h2 className="nav-group">{t(item.group)}</h2>
+            )}
+            <button
+              type="button"
+              aria-current={item.path === current ? 'page' : undefined}
+              onClick={() => {
+                setOpen(false);
+                onGo(item.path);
+              }}
+            >
+              <Icon name={item.icon} size={18} />
+              <span>{t(item.label)}</span>
+            </button>
+          </Fragment>
         ))}
         <span className="spacer" />
         {foot}
       </nav>
-      <section className="page">{children}</section>
+      <section className="page" inert={open}>
+        {children}
+      </section>
     </div>
   );
 }
