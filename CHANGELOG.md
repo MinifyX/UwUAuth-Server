@@ -3,6 +3,44 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.3
+
+**A new look, and a security audit with everything it found fixed.**
+
+The portal and the admin portal now follow the UwUSuite design: its colours, UwU Sans, its icons
+and Nyu from `@uwusuite/design`, a side bar that becomes a drawer on small screens, and a choice
+of text size in the profile. Keyboard and screen reader use got better along the way: the focus
+ring is visible everywhere, the drawer keeps the focus, and segmented controls move with the
+arrow keys.
+
+The audit went over all crates, the web app, the image, the scripts and CI. Eight findings of
+medium and twenty-one of low severity are fixed, one of low severity is open (a backup is held
+in memory while it is downloaded); the report is
+[docs/security-review-0.5.0-beta.3.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/security-review-0.5.0-beta.3.md).
+What you may notice:
+
+- UwUAuth asks "is it you?" again in more places: changing an app's addresses, consent or
+  forward-auth hosts, pairing codes, SCIM, and making admins by invitation, by group or directly.
+- A group that requires a second factor now also holds for sessions that were open already: at
+  sign-in to apps, at forward auth and when tokens are renewed.
+- Rights that come through nested groups count everywhere: a manager cannot put somebody into a
+  group that makes admins, and an invitation ends when the admin who made it is no admin any more.
+- A SCIM token stays with the address it was given for: moving SCIM to another host or port needs
+  the token again, and new SCIM addresses are on one of the app's own ports.
+- LDAP: binds end when the password, the app password or the group rule behind them changes, and
+  pages with photos hold at most 100 entries.
+- When too many sign-ins wait at once, the server answers `503 temporarily_unavailable` rather
+  than keep more of them in memory.
+
+**Images and release files are signed.** CI signs the image and `install.sh`, `update.sh`,
+`compose.yaml` and `env.example` with [cosign](https://docs.sigstore.dev/), without a key of its
+own. `install.sh` and `update.sh` check the image they pulled when `cosign` is installed and
+stop when the signature is wrong; without `cosign` they say so and go on. How to check by hand:
+[docs/deployment.md](https://github.com/MinifyX/UwUAuth-Server/blob/main/docs/deployment.md#signatures).
+
+Also: SQLite is newer (rusqlite 0.41, for RUSTSEC-2026-0459), and the image has a newer base
+with the fixed zlib.
+
 ## 0.5.0-beta.2
 
 **SCIM finds a person an app already knows by UwUAuth's id first.** When an app answers `409`

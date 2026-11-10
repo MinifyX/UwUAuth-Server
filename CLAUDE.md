@@ -27,8 +27,8 @@ Identitätsserver der UwUSuite (Personen/Gruppen an einer Stelle): OIDC, LDAP, S
 - `docs/plan.md` (Stufen 0–5 fertig, als Nächstes SAML), `CHANGELOG.md` (nach `-beta.N`-Schema), `SECURITY.md`.
 
 ## Release
-- Version in `Cargo.toml` (`workspace.package.version`, aktuell `0.5.0-beta.2`) heben; `CHANGELOG.md` braucht eine Zeile exakt `## <version>` (CI: `grep -qx`, Text wird ins GitHub-Release kopiert). Tag `vX` auf dem Merge-Commit.
+- Version in `Cargo.toml` (`workspace.package.version`, aktuell `0.5.0-beta.3`) heben; `CHANGELOG.md` braucht eine Zeile exakt `## <version>` (CI: `grep -qx`, Text wird ins GitHub-Release kopiert). Tag `vX` auf dem Merge-Commit.
 
 ## Security
 - Sicherheitskritisch: OIDC (`uwuauth-api/src/oidc`, Redirect-URI, PKCE, Tokens), `tokens.rs`/`session.rs`/`crypto.rs`, `webauthn.rs`/`totp.rs`, `forward_auth/`, SCIM (`suite/scim.rs`), LDAP-Parser (`uwuauth-ldap`: `filter.rs`, `dn.rs`, `server.rs`), Passwort-Hashing (Argon2id), später SAML (XML-Signaturen) und RADIUS.
-- Vor jedem Feature-Release den globalen Subagent `security-reviewer` über den Bereich seit dem letzten Tag laufen lassen; Ergebnis nach `docs/security-review-<version>.md` (bisher `docs/security-review-2026-09.md`).
+- Vor jedem Feature-Release den globalen Subagent `security-reviewer` über den Bereich seit dem letzten Tag laufen lassen; Ergebnis nach `docs/security-review-<version>.md` (bisher `docs/security-review-2026-09.md`, `docs/security-review-0.5.0-beta.3.md`).
