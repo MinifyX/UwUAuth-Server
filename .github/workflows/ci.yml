@@ -167,7 +167,10 @@ jobs:
   binaries:
     name: Binaries
     needs: [test, scripts, web]
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: the compiler of ubuntu-26.04 builds for x86-64-v3 (AVX) by itself, its own
+    # libraries too, and 0.5.0-beta.3 died with an illegal instruction on a VM with a plain QEMU
+    # CPU. The check under "Collect them" says when a newer image is fine.
+    runs-on: ubuntu-24.04
     env:
       # The server knows its commit and, for a release, checks for newer releases instead of
       # newer commits.
@@ -193,15 +196,7 @@ jobs:
         with:
           key: release
       - name: Build amd64
-        env:
-          # The C in the binary (SQLite) for any x86-64 CPU, whatever the runner's compiler would
-          # pick by itself: 0.5.0-beta.3 was built with AVX and died on a VM whose CPU has none.
-          CFLAGS_x86_64_unknown_linux_gnu: -march=x86-64 -mtune=generic
-        run: |
-          cc --version | head -1
-          cc -Q --help=target | grep -E -- '-march=|-mavx ' || true
-          env | grep -E '^(CC|CFLAGS|CXXFLAGS|RUSTFLAGS|CARGO_BUILD|CARGO_ENCODED)' || true
-          cargo build --release --locked --target x86_64-unknown-linux-gnu -p uwuauth-server
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu -p uwuauth-server
       - name: Build arm64
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
