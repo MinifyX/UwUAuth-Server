@@ -10,6 +10,7 @@
  * and the white die-cut edge is what keeps the outlines readable on a dark ground.
  */
 
+import { Nyu as SuiteNyu, type NyuProps } from '@uwusuite/design';
 import type { ReactNode } from 'react';
 
 export const NYU = {
@@ -245,28 +246,7 @@ export function NyuFigure({
   );
 }
 
-type NyuProps = {
-  size?: number;
-  mood?: NyuMood;
-  /** Blinking is on by default and stops on its own when motion is reduced. */
-  blink?: boolean;
-  title?: string;
-};
-
-/** The symbol on its own: the bar, the sign-in card, small empty states. */
-export function Nyu({ size = 96, mood = 'uwu', blink = true, title = 'Nyu' }: NyuProps) {
-  return (
-    <svg
-      viewBox="0 0 256 256"
-      width={size}
-      height={size}
-      role="img"
-      aria-label={title}
-      focusable="false"
-      className={blink ? 'nyu-host nyu-blink' : 'nyu-host'}
-      style={{ overflow: 'visible' }}
-    >
-      <NyuFigure mood={mood} />
-    </svg>
-  );
+/** The symbol on its own, from the suite's catalogue: the bar, the sign-in card, small empty states. */
+export function Nyu(props: Omit<NyuProps, 'shell' | 'className'>) {
+  return <SuiteNyu shell="badge" className="nyu-mark" {...props} />;
 }

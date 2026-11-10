@@ -1,11 +1,12 @@
-import { type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { t, useLanguage } from '../lib/i18n';
 import { useToast } from '../lib/toast';
 import { Icon, type IconName } from './Icon';
 import { Nyu } from './nyu/Nyu';
 import { ReauthHost } from './ReauthHost';
 
-export type NavItem = { path: string; label: string; icon: IconName };
+/** `group` is the heading the page stands under; pages of one group follow each other. */
+export type NavItem = { path: string; label: string; icon: IconName; group?: string };
 
 /**
  * The frame around every page: the bar with Nyu and the name, and what goes on top of
@@ -50,7 +51,7 @@ export function Frame({
   );
 }
 
-/** A side list of pages on a wide screen, a row to swipe along on a phone. */
+/** A side list of pages on a wide screen; below 1024px a drawer behind a menu button. */
 export function Layout({
   items,
   current,
@@ -67,19 +68,47 @@ export function Layout({
   children: ReactNode;
 }) {
   useLanguage();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  const here = items.find((item) => item.path === current);
   return (
     <div className="layout">
-      <nav className="side-nav" aria-label={label}>
-        {items.map((item) => (
-          <button
-            key={item.path}
-            type="button"
-            aria-current={item.path === current ? 'page' : undefined}
-            onClick={() => onGo(item.path)}
-          >
-            <Icon name={item.icon} size={17} />
-            <span>{t(item.label)}</span>
-          </button>
+      <div className="nav-bar">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={label}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <Icon name="menu" size={20} />
+        </button>
+        {here && <span>{t(here.label)}</span>}
+      </div>
+      <div className="nav-veil" data-open={open || undefined} onClick={() => setOpen(false)} />
+      <nav className="side-nav" aria-label={label} data-open={open || undefined}>
+        {items.map((item, at) => (
+          <Fragment key={item.path}>
+            {item.group && item.group !== items[at - 1]?.group && (
+              <p className="nav-group">{t(item.group)}</p>
+            )}
+            <button
+              type="button"
+              aria-current={item.path === current ? 'page' : undefined}
+              onClick={() => {
+                setOpen(false);
+                onGo(item.path);
+              }}
+            >
+              <Icon name={item.icon} size={18} />
+              <span>{t(item.label)}</span>
+            </button>
+          </Fragment>
         ))}
         <span className="spacer" />
         {foot}

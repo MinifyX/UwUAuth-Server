@@ -440,7 +440,7 @@ function BackButton({ onBack }: { onBack: () => void }) {
   useLanguage();
   return (
     <button type="button" className="back-button quiet" onClick={onBack}>
-      <Icon name="chevron" size={15} />
+      <Icon name="back" size={16} />
       {t('Zurück')}
     </button>
   );

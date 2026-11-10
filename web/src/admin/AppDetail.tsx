@@ -104,7 +104,7 @@ export function AppPage({ id }: { id: string }) {
 
   const back = (
     <button type="button" className="back-button quiet" onClick={() => go('/apps')}>
-      <Icon name="chevron" size={15} />
+      <Icon name="back" size={16} />
       {t('Alle Apps')}
     </button>
   );
