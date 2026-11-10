@@ -95,7 +95,10 @@ fn main() -> Result<(), String> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "uwuauth_server=info,uwuauth_api=info,uwuauth_store=info,warn".into()),
+                // ldap3_proto can log whole requests, binds with their passwords among them.
+                .unwrap_or_else(|_| {
+                    "uwuauth_server=info,uwuauth_api=info,uwuauth_store=info,ldap3_proto=off,warn".into()
+                }),
         )
         // The log goes to stderr, so what a command prints on stdout is only that.
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr).with_ansi(std::io::stderr().is_terminal()))

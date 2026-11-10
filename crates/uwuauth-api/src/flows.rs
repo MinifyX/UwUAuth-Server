@@ -507,6 +507,8 @@ async fn the_directory_goes_out_and_comes_back_in() {
 async fn a_read_only_token_only_reads() {
     let server = TestServer::new().await;
     let admin = server.person("admin", true).await;
+    let forever = admin.request("POST", "/uwu/v1/tokens", Some(json!({ "name": "x", "days": u32::MAX }))).await;
+    assert_eq!(forever.status(), StatusCode::BAD_REQUEST, "no panic for far too many days");
     let token = admin.ok("POST", "/uwu/v1/tokens", json!({ "name": "backup script", "readOnly": true })).await;
     let secret = token["secret"].as_str().unwrap();
     assert!(secret.starts_with("uwu_"));
@@ -799,4 +801,41 @@ async fn an_import_makes_nobody_an_admin() {
     let people = admin.json("/uwu/v1/people").await;
     let mallory = people.as_array().unwrap().iter().find(|person| person["username"] == "mallory").unwrap();
     assert_eq!(mallory["admin"], false);
+}
+
+#[tokio::test]
+async fn where_an_app_sends_people_and_pairing_want_a_recent_sign_in() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let made = admin
+        .ok(
+            "POST",
+            "/uwu/v1/apps",
+            json!({ "name": "App", "redirectUris": ["https://app.example.com/cb"], "launchUrl": "https://app.example.com/" }),
+        )
+        .await;
+    let path = format!("/uwu/v1/apps/{}", made["id"].as_str().unwrap());
+    age(&server, &admin).await;
+    for change in [
+        json!({ "redirectUris": ["https://elsewhere.example.com/cb"] }),
+        json!({ "consent": true }),
+        json!({ "forwardAuth": ["app.example.com"] }),
+        json!({ "launchUrl": "https://elsewhere.example.com/" }),
+    ] {
+        let refused = admin.request("PATCH", &path, Some(change.clone())).await;
+        assert_eq!(json(refused).await["error"], "reauth", "{change}");
+    }
+    admin
+        .ok("PATCH", &path, json!({ "description": "Still fine", "redirectUris": ["https://app.example.com/cb"] }))
+        .await;
+    let code = admin.request("POST", "/uwu/v1/pairing-codes", Some(json!({}))).await;
+    assert_eq!(json(code).await["error"], "reauth");
+    let scim = admin
+        .request(
+            "PUT",
+            &format!("{path}/scim"),
+            Some(json!({ "baseUrl": "https://app.example.com/scim", "token": "t" })),
+        )
+        .await;
+    assert_eq!(json(scim).await["error"], "reauth");
 }

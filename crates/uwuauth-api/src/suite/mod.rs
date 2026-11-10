@@ -144,6 +144,9 @@ async fn create_code(
     ClientIp(ip): ClientIp,
     Json(new): Json<NewCode>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    if let AdminOnly::Person(me) = &admin {
+        me.require_fresh()?;
+    }
     let groups = state.store.groups().await?;
     let mut allowed = resolve(&groups, &new.allowed_groups, "allowedGroups")?;
     if allowed.iter().any(|id| id == EVERYONE_ID) {
@@ -406,6 +409,10 @@ fn check(request: SuiteAppIn, code: &PairingCode) -> ApiResult<Checked> {
         None => None,
         Some(scim) => {
             on_host(&scim.base_url, &url, "app.scim.baseUrl", false)?;
+            // SCIM only goes to the app's own port too (see `scim::pinned`).
+            if parse_uri(&scim.base_url, "app.scim.baseUrl")?.port_or_known_default() != url.port_or_known_default() {
+                return Err(ApiError::field("app.scim.baseUrl", "uri", "The SCIM address is on the app's own port."));
+            }
             let resources = scim.resources.unwrap_or_else(|| vec!["User".into(), "Group".into()]);
             if !resources.iter().any(|resource| resource == "User")
                 || resources.iter().any(|resource| resource != "User" && resource != "Group")
@@ -475,14 +482,16 @@ fn invalid_code() -> ApiError {
 
 /// `POST /uwu/v1/pair`: a suite app with a code becomes an app here.
 async fn pair(State(state): State<AppState>, ClientIp(ip): ClientIp, body: Bytes) -> ApiResult<Json<Value>> {
-    // Per address first: somebody who ran out of tries does not use up everybody else's.
-    if !state.limits.pairing.check(ip) || !state.limits.pairing_all.take(()) {
+    // Per address first: somebody who ran out of tries does not use up everybody else's. The
+    // shared budget only pays for wrong codes, so a good one always gets through.
+    if !state.limits.pairing.check(ip) || !state.limits.pairing_all.allows(&()) {
         return Err(ApiError::too_many());
     }
     let request: PairRequest = serde_json::from_slice(&body)
         .map_err(|error| ApiError::bad("invalid", format!("The request is not what pairing takes: {error}")))?;
     let product: String = request.app.product.chars().filter(|c| !c.is_control()).take(40).collect();
     let Some(code) = find_code(&state, &request.code).await? else {
+        state.limits.pairing_all.take(());
         audit(&state, "app_pairing_refused", None, None, None, &ip, json!({ "product": product, "reason": "code" }))
             .await;
         return Err(invalid_code());

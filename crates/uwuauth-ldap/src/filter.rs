@@ -9,7 +9,7 @@
 //! - `1.2.840.113556.1.4.803` / `…804` (bitwise AND / OR): `userAccountControl` flags, as in
 //!   `(!(userAccountControl:1.2.840.113556.1.4.803:=2))` for "not disabled".
 
-use crate::directory::{Entry, Snapshot};
+use crate::directory::{Entry, Sees, Snapshot};
 use crate::dn::Dn;
 use ldap3_proto::proto::{LdapFilter, LdapSubstringFilter};
 use std::collections::{BTreeSet, HashMap};
@@ -20,6 +20,19 @@ use std::collections::{BTreeSet, HashMap};
 pub struct Nested {
     groups: HashMap<String, BTreeSet<String>>,
     members: HashMap<String, BTreeSet<String>>,
+    /// For a person: the only DNs an in-chain match may ask about, their own and their groups'.
+    only: Option<BTreeSet<String>>,
+}
+
+impl Nested {
+    /// For a search by `sees`.
+    pub fn for_caller(sees: &Sees) -> Self {
+        let only = match sees {
+            Sees::All => None,
+            Sees::Person { own, groups, .. } => Some(groups.iter().cloned().chain([own.clone()]).collect()),
+        };
+        Nested { only, ..Nested::default() }
+    }
 }
 
 /// At most this many extensible matches in one filter: each can walk every group.
@@ -109,6 +122,9 @@ pub fn matches(filter: &LdapFilter, entry: &Entry, snapshot: &Snapshot, nested: 
             match assertion.matching_rule.as_deref() {
                 Some(IN_CHAIN) => {
                     let Some(asked) = Dn::parse(&assertion.match_value).map(|dn| dn.normalized()) else { return false };
+                    if nested.only.as_ref().is_some_and(|only| !only.contains(&asked)) {
+                        return false;
+                    }
                     match name.to_lowercase().as_str() {
                         "memberof" => nested
                             .groups

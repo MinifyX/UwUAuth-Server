@@ -858,3 +858,115 @@ async fn a_code_that_comes_again_ends_what_it_gave() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "the first refresh token went with the replayed code");
 }
+
+// ── What the review of 0.5.0-beta.3 found, fixed ──────────
+
+async fn start_device(server: &TestServer, client_id: &str, secret: Option<&str>) -> Value {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_id", client_id)
+        .append_pair("scope", "openid")
+        .finish();
+    let mut request =
+        Request::post("/oauth/device_authorization").header("content-type", "application/x-www-form-urlencoded");
+    if let Some(secret) = secret {
+        use base64::Engine as _;
+        let credentials = base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
+        request = request.header("authorization", format!("Basic {credentials}"));
+    }
+    json(server.send(request.body(Body::from(body)).unwrap()).await).await
+}
+
+#[tokio::test]
+async fn a_second_factor_the_app_asks_for_later_holds_at_every_grant() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let device = "urn:ietf:params:oauth:grant-type:device_code";
+    let (client_id, secret, id) = app(
+        &admin,
+        json!({ "name": "App", "redirectUris": [REDIRECT], "grantTypes": ["authorization_code", "refresh_token", device] }),
+    )
+    .await;
+    let secret = secret.unwrap();
+    // A password-only session gets a code, a refresh token and a confirmed device first.
+    let first = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let waiting = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let exchange = |code: &str| {
+        [("grant_type", "authorization_code"), ("code", code), ("redirect_uri", REDIRECT)]
+            .map(|(name, value)| (name, value.to_string()))
+    };
+    let pairs = exchange(&first);
+    let pairs: Vec<(&str, &str)> = pairs.iter().map(|(name, value)| (*name, value.as_str())).collect();
+    let (_, tokens) = token(&server, Some((&client_id, &secret)), &pairs).await;
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_string();
+    let started = start_device(&server, &client_id, Some(&secret)).await;
+    admin
+        .ok("POST", &format!("/uwu/v1/device/{}", started["user_code"].as_str().unwrap()), json!({ "approve": true }))
+        .await;
+
+    admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "requireMfa": true })).await;
+    let basic = Some((client_id.as_str(), secret.as_str()));
+    let (status, body) = token(&server, basic, &[("grant_type", "refresh_token"), ("refresh_token", &refresh)]).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_grant")), "{body}");
+    let pairs = exchange(&waiting);
+    let pairs: Vec<(&str, &str)> = pairs.iter().map(|(name, value)| (*name, value.as_str())).collect();
+    let (_, body) = token(&server, basic, &pairs).await;
+    assert_eq!(body["error"], "invalid_grant", "the code: {body}");
+    let poll =
+        [("grant_type", device), ("device_code", started["device_code"].as_str().unwrap()), ("client_id", &client_id)];
+    let (_, body) = token(&server, basic, &poll).await;
+    assert_eq!(body["error"], "invalid_grant", "the device: {body}");
+}
+
+#[tokio::test]
+async fn a_device_code_runs_out_however_often_it_is_asked() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, _, _) = app(
+        &admin,
+        json!({ "name": "TV", "public": true, "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code"] }),
+    )
+    .await;
+    let started = start_device(&server, &client_id, None).await;
+    let device_code = started["device_code"].as_str().unwrap();
+    let key = b64(&sha256(device_code.as_bytes()));
+    let poll = [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ("device_code", device_code),
+        ("client_id", client_id.as_str()),
+    ];
+    let minutes = |n: u64| std::time::Duration::from_secs(n * 60);
+    server.state.oidc().devices.age(&key, minutes(9));
+    let (_, waiting) = token(&server, None, &poll).await;
+    assert_eq!(waiting["error"], "authorization_pending");
+    server.state.oidc().devices.age(&key, minutes(2));
+    let (_, gone) = token(&server, None, &poll).await;
+    assert_eq!(gone["error"], "expired_token", "asking did not keep it alive");
+}
+
+#[tokio::test]
+async fn a_switched_off_app_is_not_where_signing_out_leads() {
+    let server = TestServer::new().await;
+    let admin = server.person("admin", true).await;
+    let (client_id, secret, id) = app(
+        &admin,
+        json!({ "name": "App", "redirectUris": [REDIRECT], "postLogoutRedirectUris": ["https://app.example.com/bye"] }),
+    )
+    .await;
+    let code = param(&authorize(&admin, &client_id, &[]).await, "code").unwrap();
+    let (_, tokens) = token(
+        &server,
+        Some((&client_id, &secret.unwrap())),
+        &[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", REDIRECT)],
+    )
+    .await;
+    let hint = tokens["id_token"].as_str().unwrap();
+    admin.ok("PATCH", &format!("/uwu/v1/apps/{id}"), json!({ "disabled": true })).await;
+    let answer = location(
+        &admin
+            .get(&format!(
+                "/oauth/logout?id_token_hint={hint}&post_logout_redirect_uri=https%3A%2F%2Fapp.example.com%2Fbye"
+            ))
+            .await,
+    );
+    assert!(!answer.starts_with("https://app.example.com"), "{answer}");
+}

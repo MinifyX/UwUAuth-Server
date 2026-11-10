@@ -109,7 +109,7 @@ impl Store {
         let (person, since) = (person.to_string(), since.to_string());
         self.sqlite_read(move |conn| {
             conn.query_row(
-                "SELECT count(*) FROM events WHERE person_id = ?1 AND kind = 'login_failed' AND time > ?2 \
+                "SELECT count(*) FROM events WHERE person_id = ?1 AND kind IN ('login_failed', 'reauth_failed') AND time > ?2 \
                  AND id > coalesce((SELECT max(id) FROM events WHERE person_id = ?1 AND kind = 'login'), 0)",
                 params![person, since],
                 |row| row.get(0),
@@ -164,7 +164,7 @@ mod tests {
         store.record("login_failed", None, Some("a"), None, None, "{}").await.unwrap();
         store.record("login", None, Some("a"), None, None, "{}").await.unwrap();
         store.record("login_failed", None, Some("a"), None, None, "{}").await.unwrap();
-        store.record("login_failed", None, Some("a"), None, None, "{}").await.unwrap();
-        assert_eq!(store.failed_logins_since("a", &since).await.unwrap(), 2);
+        store.record("reauth_failed", None, Some("a"), None, None, "{}").await.unwrap();
+        assert_eq!(store.failed_logins_since("a", &since).await.unwrap(), 2, "a wrong confirmation counts too");
     }
 }

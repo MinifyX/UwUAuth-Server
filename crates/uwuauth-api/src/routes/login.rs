@@ -432,29 +432,31 @@ async fn forgot(
     if !state.limits.mail.take(to.to_lowercase()) || !state.mailer.enabled() {
         return Ok(StatusCode::ACCEPTED);
     }
-    let token = random_token(32);
-    state
-        .store
-        .create_link(
-            sha256(token.as_bytes()),
-            Purpose::Reset,
-            Some(&person.id),
-            "{}",
-            None,
-            &clock::in_seconds(RESET_MINUTES * 60),
-        )
-        .await?;
-    let mail = Mail::PasswordReset { link: state.link(&format!("/reset?token={token}")), minutes: RESET_MINUTES };
-    // In the background: waiting for the mail server would tell, by the time taken, that the
-    // account exists.
-    let mailer = state.mailer.clone();
-    let language = Language::from_code(&person.language);
+    // All in the background: writing the link and waiting for the mail server would tell, by
+    // the time taken, that the account exists.
     tokio::spawn(async move {
-        if let Err(error) = mailer.send(&to, &mail, language).await {
+        let token = random_token(32);
+        let made = state
+            .store
+            .create_link(
+                sha256(token.as_bytes()),
+                Purpose::Reset,
+                Some(&person.id),
+                "{}",
+                None,
+                &clock::in_seconds(RESET_MINUTES * 60),
+            )
+            .await;
+        if let Err(error) = made {
+            tracing::warn!(%error, "the new password link could not be kept");
+            return;
+        }
+        audit(&state, "reset_requested", None, Some(&person.id), None, &ip, json!({})).await;
+        let mail = Mail::PasswordReset { link: state.link(&format!("/reset?token={token}")), minutes: RESET_MINUTES };
+        if let Err(error) = state.mailer.send(&to, &mail, Language::from_code(&person.language)).await {
             tracing::warn!(%error, "the mail with a new password link did not go out");
         }
     });
-    audit(&state, "reset_requested", None, Some(&person.id), None, &ip, json!({})).await;
     Ok(StatusCode::ACCEPTED)
 }
 

@@ -36,6 +36,27 @@ impl<V> Expiring<V> {
         true
     }
 
+    /// Change the live value under `key`, keeping when it was put: what is changed runs out as
+    /// planned. False when there is none (gone or run out).
+    pub fn replace(&self, key: &str, value: V) -> bool {
+        let mut entries = self.entries.lock();
+        match entries.get_mut(key) {
+            Some((old, at)) if at.elapsed() < self.ttl => {
+                *old = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Make the value under `key` older by `by`, as if time had passed.
+    #[cfg(test)]
+    pub fn age(&self, key: &str, by: Duration) {
+        if let Some((_, at)) = self.entries.lock().get_mut(key) {
+            *at = at.checked_sub(by).expect("the clock runs long enough");
+        }
+    }
+
     /// Forget every value whose key `matches`.
     pub fn forget(&self, matches: impl Fn(&str) -> bool) {
         self.entries.lock().retain(|key, _| !matches(key));
@@ -114,6 +135,19 @@ mod tests {
         let gone = Expiring::new(Duration::ZERO);
         gone.put("b".into(), 2);
         assert_eq!(gone.take("b"), None);
+    }
+
+    #[test]
+    fn a_replaced_value_keeps_its_time() {
+        let map = Expiring::new(Duration::from_secs(60));
+        assert!(!map.replace("a", 1), "nothing to replace");
+        map.put("a".into(), 1);
+        map.age("a", Duration::from_secs(59));
+        assert!(map.replace("a", 2));
+        assert_eq!(map.peek("a"), Some(2));
+        map.age("a", Duration::from_secs(2));
+        assert!(!map.replace("a", 2), "run out stays run out");
+        assert_eq!(map.peek("a"), None);
     }
 
     #[test]

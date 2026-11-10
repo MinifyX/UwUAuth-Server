@@ -10,7 +10,7 @@
 //!   sign the person in again. Every refresh checks again that the person may use the app — a
 //!   kid's time window that closed ends the app's access within a quarter of an hour.
 
-use super::authorize::{Code, refusal};
+use super::authorize::{Code, refusal, strong};
 use super::claims;
 use super::device::DeviceState;
 use super::keys::{Alg, half_hash};
@@ -239,6 +239,9 @@ async fn code_grant(
     if refusal(state, &client.app, &person).await?.is_some() {
         return Ok(invalid_grant("the person may not use this app now"));
     }
+    if client.app.require_mfa && !strong(&found.amr) {
+        return Ok(invalid_grant("this app needs a second factor"));
+    }
     let issued = tokens(
         state,
         Issue {
@@ -318,6 +321,12 @@ async fn refresh_grant(
         state.store.revoke_family(&found.family).await?;
         return Ok(invalid_grant("the person may not use this app now"));
     }
+    let amr: Vec<String> = serde_json::from_str(&found.amr).unwrap_or_default();
+    // The app may have started asking for a second factor after this sign-in.
+    if client.app.require_mfa && !strong(&amr) {
+        state.store.revoke_family(&found.family).await?;
+        return Ok(invalid_grant("this app needs a second factor; the app has to sign in again"));
+    }
     let issued = tokens(
         state,
         Issue {
@@ -326,7 +335,7 @@ async fn refresh_grant(
             scopes: asked,
             nonce: None,
             auth_time: found.auth_time,
-            amr: serde_json::from_str(&found.amr).unwrap_or_default(),
+            amr,
             sid: found.sid,
             replaces: Some((hash, found.family)),
             id_token: true,
@@ -384,13 +393,18 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
     let now = std::time::Instant::now();
     if grant.last_poll.is_some_and(|last| now.duration_since(last).as_secs() < super::device::INTERVAL_SECONDS) {
         grant.last_poll = Some(now);
-        state.oidc().devices.put(key, grant);
+        // Replaced, not put again: polling does not keep a device code alive past its ten minutes.
+        if !state.oidc().devices.replace(&key, grant) {
+            return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
+        }
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "slow_down", "ask less often"));
     }
     grant.last_poll = Some(now);
     match grant.state.clone() {
         DeviceState::Waiting => {
-            state.oidc().devices.put(key, grant);
+            if !state.oidc().devices.replace(&key, grant) {
+                return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
+            }
             Ok(oauth_error(StatusCode::BAD_REQUEST, "authorization_pending", "the person has not confirmed yet"))
         }
         DeviceState::Refused => {
@@ -407,6 +421,9 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
             };
             if refusal(state, &client.app, &person).await?.is_some() {
                 return Ok(invalid_grant("the person may not use this app now"));
+            }
+            if client.app.require_mfa && !strong(&amr) {
+                return Ok(invalid_grant("this app needs a second factor"));
             }
             let issued = tokens(
                 state,

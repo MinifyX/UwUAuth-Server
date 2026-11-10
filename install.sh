@@ -336,11 +336,11 @@ case "$dir" in
   /*) ;;
   *) dir="$PWD/$dir" ;;
 esac
+# Before realpath, which would follow the link.
+[ -L "${dir%/}" ] && die "$dir is a link; install into the directory itself"
 dir=$(realpath -m -- "$dir") || die "there is no way to $dir"
 [ "$dir" != / ] || die "--dir / is not a directory to install into"
-if [ -L "$dir" ]; then
-  die "$dir is a link; install into the directory itself"
-elif [ -e "$dir" ]; then
+if [ -e "$dir" ]; then
   [ -d "$dir" ] || die "$dir is not a directory"
   owned_right "$dir" || die "$dir may be changed by someone other than root. Make it root's and writable only by root: sudo chown root: $dir && sudo chmod go-w $dir"
 fi

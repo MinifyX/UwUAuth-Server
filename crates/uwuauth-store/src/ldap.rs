@@ -76,10 +76,24 @@ impl Store {
         .await
     }
 
-    /// A new password for an account.
+    /// Whether `hash` is still the password of the account `name`.
+    pub async fn ldap_account_has(&self, name: &str, hash: Vec<u8>) -> Result<bool> {
+        let name = name.to_string();
+        self.sqlite_read(move |conn| {
+            conn.query_row(
+                "SELECT count(*) FROM ldap_accounts WHERE name = ?1 AND hash = ?2",
+                params![name, hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n == 1)
+        })
+        .await
+    }
+
+    /// A new password for an account. LDAP connections bound with the old one see the change.
     pub async fn renew_ldap_account(&self, id: &str, hash: Vec<u8>) -> Result<Option<LdapAccount>> {
         let id = id.to_string();
-        self.sqlite_write(move |tx| {
+        self.directory_write(move |tx| {
             tx.execute("UPDATE ldap_accounts SET hash = ?2 WHERE id = ?1", params![id, hash])?;
             tx.query_row(&format!("SELECT {COLUMNS} FROM ldap_accounts WHERE id = ?1"), [&id], account_from).optional()
         })

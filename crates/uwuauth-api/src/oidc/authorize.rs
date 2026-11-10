@@ -18,7 +18,7 @@ use crate::errors::{ApiError, ApiResult};
 use crate::session::{ClientIp, Me, from_headers};
 use crate::{AppState, audit, policy};
 use axum::extract::{Form, Path, Query, RawQuery, State};
-use axum::http::{HeaderMap, HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -146,7 +146,10 @@ pub fn redirect_matches(registered: &[String], given: &str) -> bool {
     let Ok(given) = url::Url::parse(given) else { return false };
     let loopback =
         |url: &url::Url| url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"));
+    // Nothing in it that the registered address does not have: no fragment, no login.
+    let plain = given.fragment().is_none() && given.username().is_empty() && given.password().is_none();
     loopback(&given)
+        && plain
         && registered.iter().filter_map(|uri| url::Url::parse(uri).ok()).any(|uri| {
             loopback(&uri)
                 && uri.host_str() == given.host_str()
@@ -377,7 +380,9 @@ async fn run(state: &AppState, ip: IpAddr, headers: &HeaderMap, params: Params, 
                 return refuse("consent_required", "the person has not agreed yet");
             }
             let id = crate::crypto::random_token(18);
-            state.oidc().consents.put(id.clone(), request);
+            if !state.oidc().consents.put(id.clone(), request) {
+                return refuse("temporarily_unavailable", "too many sign-ins are waiting, try later");
+            }
             return Ok(page(state, "consent", &[("request", &id)]));
         }
     }
@@ -430,7 +435,7 @@ async fn make_code(state: &AppState, app: &App, request: &Request, consented: bo
         json!({ "app": app.name }),
     )
     .await;
-    state.oidc().codes.put(
+    let kept = state.oidc().codes.put(
         crate::crypto::b64(&crate::crypto::sha256(code.as_bytes())),
         Code {
             app_id: app.id.clone(),
@@ -445,7 +450,19 @@ async fn make_code(state: &AppState, app: &App, request: &Request, consented: bo
             sid: request.sid.clone(),
         },
     );
+    if !kept {
+        return Err(busy());
+    }
     Ok(code)
+}
+
+/// The memory for waiting sign-ins is full.
+fn busy() -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "temporarily_unavailable",
+        "too many sign-ins are waiting, try later",
+    )
 }
 
 impl AppState {
@@ -479,7 +496,7 @@ async fn form_answer(State(state): State<AppState>, Path(id): Path<String>) -> A
 
 /// Where the browser goes with the answer for the app: the app's address with it added, or, for
 /// `form_post`, the page that posts it.
-fn answer_address(state: &AppState, request: &Request, pairs: &[(&str, &str)]) -> String {
+fn answer_address(state: &AppState, request: &Request, pairs: &[(&str, &str)]) -> ApiResult<String> {
     let mut all: Vec<(String, String)> =
         pairs.iter().map(|(name, value)| (name.to_string(), value.to_string())).collect();
     if let Some(app_state) = &request.state {
@@ -488,16 +505,19 @@ fn answer_address(state: &AppState, request: &Request, pairs: &[(&str, &str)]) -
     all.push(("iss".into(), issuer(state)));
     if request.form_post {
         let id = crate::crypto::random_token(18);
-        state.oidc().answers.put(id.clone(), FormAnswer { redirect_uri: request.redirect_uri.clone(), pairs: all });
-        return format!("{}/oauth/answer/{id}", state.config.public);
+        if !state.oidc().answers.put(id.clone(), FormAnswer { redirect_uri: request.redirect_uri.clone(), pairs: all })
+        {
+            return Err(busy());
+        }
+        return Ok(format!("{}/oauth/answer/{id}", state.config.public));
     }
-    match url::Url::parse(&request.redirect_uri) {
+    Ok(match url::Url::parse(&request.redirect_uri) {
         Ok(mut url) => {
             url.query_pairs_mut().extend_pairs(all);
             url.to_string()
         }
         Err(_) => request.redirect_uri.clone(),
-    }
+    })
 }
 
 async fn consent_info(State(state): State<AppState>, me: Me, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -541,7 +561,7 @@ async fn consent_decide(
     let app = state.store.app(&request.app_id).await?.ok_or_else(ApiError::not_found)?;
     let redirect = if decision.approve {
         let code = make_code(&state, &app, &request, true, ip).await?;
-        answer_address(&state, &request, &[("code", &code)])
+        answer_address(&state, &request, &[("code", &code)])?
     } else {
         audit(
             &state,
@@ -553,7 +573,7 @@ async fn consent_decide(
             json!({ "app": app.name }),
         )
         .await;
-        answer_address(&state, &request, &[("error", "access_denied"), ("error_description", "the person said no")])
+        answer_address(&state, &request, &[("error", "access_denied"), ("error_description", "the person said no")])?
     };
     Ok(Json(json!({ "redirect": redirect })))
 }
@@ -571,6 +591,9 @@ mod tests {
         assert!(!redirect_matches(&registered, "https://app.example.com:8443/cb"), "only loopback may change the port");
         assert!(!redirect_matches(&registered, "http://127.0.0.1:49152/other"));
         assert!(!redirect_matches(&registered, "https://evil.example.net/cb"));
+        assert!(!redirect_matches(&registered, "http://127.0.0.1:49152/callback#frag"));
+        assert!(!redirect_matches(&registered, "http://user@127.0.0.1:49152/callback"));
+        assert!(!redirect_matches(&registered, "http://user:pw@127.0.0.1:49152/callback"));
     }
 
     #[test]
