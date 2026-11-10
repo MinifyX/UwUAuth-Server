@@ -294,6 +294,21 @@ async fn an_app_finds_people_the_active_directory_way() {
 }
 
 #[tokio::test]
+async fn a_search_without_pages_keeps_everybody_when_it_asks_for_photos() {
+    let world = world(true, None).await;
+    for number in 0..101 {
+        let name = format!("p{number:03}");
+        world.person(&name, &name).await;
+    }
+    world.service("app", "secret secret").await;
+    let mut client = world.connect();
+    client.bind("cn=app,ou=services,dc=example,dc=com", "secret secret").await;
+    // `search` asserts that the answer is a success, not a size limit.
+    let entries = client.search("(objectClass=person)", &["uid", "jpegPhoto"]).await;
+    assert!(entries.len() >= 101, "{}", entries.len());
+}
+
+#[tokio::test]
 async fn a_long_list_comes_in_pages() {
     let world = world(true, None).await;
     for name in ["a1", "a2", "a3", "a4", "a5"] {

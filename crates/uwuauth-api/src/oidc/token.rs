@@ -384,7 +384,7 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "device_code is missing"));
     };
     let key = b64(&sha256(device_code.as_bytes()));
-    let Some(mut grant) = state.oidc().devices.peek(&key) else {
+    let Some(grant) = state.oidc().devices.peek(&key) else {
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
     };
     if grant.app_id != client.app.id {
@@ -392,17 +392,16 @@ async fn device_grant(state: &AppState, client: &Client, device_code: Option<&st
     }
     let now = std::time::Instant::now();
     if grant.last_poll.is_some_and(|last| now.duration_since(last).as_secs() < super::device::INTERVAL_SECONDS) {
-        grant.last_poll = Some(now);
-        // Replaced, not put again: polling does not keep a device code alive past its ten minutes.
-        if !state.oidc().devices.replace(&key, grant) {
+        // Changed in place: polling does not keep a device code alive past its ten minutes, and
+        // does not undo a yes given in this very moment.
+        if !state.oidc().devices.update(&key, |grant| grant.last_poll = Some(now)) {
             return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
         }
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "slow_down", "ask less often"));
     }
-    grant.last_poll = Some(now);
     match grant.state.clone() {
         DeviceState::Waiting => {
-            if !state.oidc().devices.replace(&key, grant) {
+            if !state.oidc().devices.update(&key, |grant| grant.last_poll = Some(now)) {
                 return Ok(oauth_error(StatusCode::BAD_REQUEST, "expired_token", "the device code ran out"));
             }
             Ok(oauth_error(StatusCode::BAD_REQUEST, "authorization_pending", "the person has not confirmed yet"))

@@ -5,7 +5,7 @@ import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { PasswordInput } from '../components/PasswordInput';
 import { Picker, type Choice } from '../components/Picker';
-import { api, seg } from '../lib/api';
+import { api, ApiError, seg } from '../lib/api';
 import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { toast } from '../lib/toast';
@@ -283,7 +283,11 @@ function ScimForm({ app, onClose }: { app: App; onClose: (changed: boolean) => v
       toast(t('Gespeichert ✧'));
       onClose(true);
     } catch (e) {
-      setError(errorText(e));
+      setError(
+        e instanceof ApiError && e.detail?.field === 'token'
+          ? t('Gib das SCIM-Token der App ein – für eine neue Adresse braucht es das noch einmal.')
+          : errorText(e),
+      );
     } finally {
       setBusy(false);
     }

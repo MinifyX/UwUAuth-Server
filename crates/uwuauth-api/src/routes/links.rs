@@ -87,6 +87,17 @@ async fn person_of(state: &AppState, link: &Link) -> ApiResult<Person> {
     Ok(person)
 }
 
+/// An invitation is only as good as whoever made it: an admin then, and still one now.
+async fn maker_still_admin(state: &AppState, link: &Link) -> ApiResult<()> {
+    if let Some(creator) = link.created_by.as_deref()
+        && !(state.store.admin_ids().await?.contains(creator)
+            && state.store.person(creator).await?.is_some_and(|person| person.active()))
+    {
+        return Err(gone());
+    }
+    Ok(())
+}
+
 async fn show(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -103,6 +114,7 @@ async fn show(
     });
     match purpose {
         Purpose::Invite => {
+            maker_still_admin(&state, &link).await?;
             let invitation: Invitation = serde_json::from_str(&link.data).unwrap_or_default();
             let inviter = match &link.created_by {
                 Some(id) => state.store.person(id).await?.map(|person| person.display_name),
@@ -203,13 +215,7 @@ async fn accept(
     body: Complete,
 ) -> ApiResult<Response> {
     let invitation: Invitation = serde_json::from_str(&link.data).unwrap_or_default();
-    // An invitation is only as good as whoever made it: an admin then, and still one now.
-    if let Some(creator) = link.created_by.as_deref()
-        && !(state.store.admin_ids().await?.contains(creator)
-            && state.store.person(creator).await?.is_some_and(|person| person.active()))
-    {
-        return Err(gone());
-    }
+    maker_still_admin(state, &link).await?;
     let username = policy::username(body.username.as_deref().unwrap_or_default())?;
     let display_name = policy::display_name(body.display_name.as_deref().unwrap_or(&username))?;
     // The address the invitation went to stays; otherwise what the person typed, if anything.

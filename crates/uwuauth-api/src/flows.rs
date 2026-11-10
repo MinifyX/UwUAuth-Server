@@ -881,6 +881,8 @@ async fn an_invitation_ends_with_its_maker_s_admin_right() {
     assert_eq!(invited["managers"], json!([second_id]));
     let token = token_of(invited["link"].as_str().unwrap());
     first.ok("PUT", &format!("/uwu/v1/people/{second_id}/groups"), json!({ "groups": [] })).await;
+    let shown = server.browser().get(&format!("/uwu/v1/links/invite/{token}")).await;
+    assert_eq!(shown.status(), StatusCode::GONE, "said before the form is filled in");
     let accepted = server
         .browser()
         .post(&format!("/uwu/v1/links/invite/{token}"), json!({ "username": "late", "password": PASSWORD }))

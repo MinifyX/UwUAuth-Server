@@ -339,11 +339,14 @@ fn host_port(uri: &str) -> Option<String> {
 }
 
 /// Whether SCIM may go to `base_url` for this app: `https` on one of its own hosts, or plain
-/// `http` when that host is this machine.
-fn pinned(base_url: &str, app: &uwuauth_store::App) -> Result<(), String> {
+/// `http` when that host is this machine. With `port`, on one of its own ports too: asked of an
+/// address somebody sets, not of one that was saved before ports counted and still gets its pushes.
+fn pinned(base_url: &str, app: &uwuauth_store::App, port: bool) -> Result<(), String> {
     let hosts = hosts_of(app);
+    let name = |host: &str| host.rsplit_once(':').map(|(name, _)| name.to_string());
     let ok = url::Url::parse(base_url).is_ok_and(|url| {
-        host_port(base_url).is_some_and(|host| hosts.contains(&host))
+        host_port(base_url)
+            .is_some_and(|host| hosts.contains(&host) || (!port && hosts.iter().any(|own| name(own) == name(&host))))
             && match url.scheme() {
                 "https" => true,
                 "http" => super::loopback(&url),
@@ -363,7 +366,7 @@ fn pinned(base_url: &str, app: &uwuauth_store::App) -> Result<(), String> {
 }
 
 fn open(state: &AppState, app: &uwuauth_store::App, target: &ScimTarget) -> Result<Endpoint, String> {
-    pinned(&target.base_url, app)?;
+    pinned(&target.base_url, app, false)?;
     let token = state
         .sealer
         .open(&target.token)
@@ -709,7 +712,9 @@ pub(crate) async fn set_up(
             "The SCIM address is an http(s) address without anything after it.",
         ));
     }
-    if let Err(error) = pinned(&base_url, &app) {
+    // An address that stays where it was saved keeps working, whatever its port.
+    let moved = before.as_ref().is_none_or(|before| host_port(&before.base_url) != host_port(&base_url));
+    if let Err(error) = pinned(&base_url, &app, moved) {
         let mut letters = error.chars();
         let first = letters.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default();
         return Err(ApiError::field("baseUrl", "uri", format!("{first}{}.", letters.as_str())));

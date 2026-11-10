@@ -771,7 +771,8 @@ impl Ldap {
         let asked: Vec<String> = request.attrs.iter().map(|name| name.to_lowercase()).collect();
         let photos = asked.iter().any(|name| PHOTOS.contains(&name.as_str()));
         // A page with photos is held in memory whole: fewer entries then, the rest on the next page.
-        let limit = if photos { limit.min(MOST_PHOTOS) } else { limit };
+        // A search without pages keeps all its entries, and only the first ones get their photo.
+        let limit = if photos && paged.is_some() { limit.min(MOST_PHOTOS) } else { limit };
         let on_page: Vec<usize> = found.iter().skip(start).take(page.min(limit)).copied().collect();
         // Photos only when asked for by name, fetched then for the whole page at once: they are
         // big, and most searches never want them.
@@ -782,6 +783,7 @@ impl Ldap {
                     Kind::Person(person) => Some(person.clone()),
                     _ => None,
                 })
+                .take(MOST_PHOTOS)
                 .collect();
             self.state.store.avatars_of(people).await.unwrap_or_default()
         } else {

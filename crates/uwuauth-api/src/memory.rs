@@ -49,6 +49,19 @@ impl<V> Expiring<V> {
         }
     }
 
+    /// Change the live value under `key` in place, so nothing written in between is lost. False
+    /// when there is none.
+    pub fn update(&self, key: &str, change: impl FnOnce(&mut V)) -> bool {
+        let mut entries = self.entries.lock();
+        match entries.get_mut(key) {
+            Some((value, at)) if at.elapsed() < self.ttl => {
+                change(value);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Make the value under `key` older by `by`, as if time had passed.
     #[cfg(test)]
     pub fn age(&self, key: &str, by: Duration) {
@@ -124,6 +137,17 @@ impl Default for Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_is_changed_in_place_while_it_lives() {
+        let map = Expiring::new(Duration::from_secs(60));
+        map.put("a".into(), 1);
+        assert!(map.update("a", |value| *value += 1));
+        assert_eq!(map.peek("a"), Some(2));
+        map.age("a", Duration::from_secs(61));
+        assert!(!map.update("a", |value| *value += 1));
+        assert!(!map.update("b", |value| *value += 1));
+    }
 
     #[test]
     fn a_value_is_taken_once_and_runs_out() {

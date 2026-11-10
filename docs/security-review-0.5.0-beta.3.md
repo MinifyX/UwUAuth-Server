@@ -163,6 +163,16 @@ they need a recent sign-in, also for `admin: true`. *Test:* as M2.
 `routes/admin.rs` (`csv_field`). *Fixed:* prefixed like the other formula characters. *Test:*
 `csv_both_ways`.
 
+## Review of the fixes
+
+A second reader went over the fix diff. What it found, all changed:
+
+- `suite/scim.rs` `open`: the host-and-port pin ran on every push, so a target saved earlier on another port than the app would have stopped getting pushes. Pushes pin the host again; the port counts where somebody sets or moves the address.
+- `uwuauth-ldap/src/server.rs`: the cap of 100 entries for photo searches also cut searches without the paged control and ended them with a size limit. Now only pages are cut; a search without pages keeps every entry and gives photos for the first 100.
+- `oidc/token.rs` device poll: read and written back in two steps, a poll could undo a yes given in between. The poll changes its time in place now (`Expiring::update`).
+- `routes/links.rs` `show`: an invitation whose maker is no admin any more was only refused on submit; the page says so on load now.
+- Web: a text for the token a moved SCIM address needs, and one for `temporarily_unavailable`.
+
 ## D-1 Dependency
 
 **Medium — the bundled SQLite had a known flaw** (RUSTSEC-2026-0459, CVE-2026-119375, in
