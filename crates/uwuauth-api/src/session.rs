@@ -296,6 +296,65 @@ impl AdminOnly {
     }
 }
 
+/// Who calls a route that admins and owners may both use: an API token of an admin, an admin, or
+/// a signed-in person (who may still manage a group they own). Admin-only checks go through
+/// [`Actor::is_admin`]; changes that need a recent sign-in go through [`Actor::require_fresh`],
+/// which a token never passes.
+#[derive(Debug, Clone)]
+pub enum Actor {
+    Token(ApiToken),
+    Person(Box<Me>),
+}
+
+impl FromRequestParts<AppState> for Actor {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        if bearer(&parts.headers).is_some_and(|token| token.starts_with(crate::tokens::PREFIX)) {
+            // A token is an admin's, or nothing: `AdminOnly` checks that and says so.
+            return match AdminOnly::from_request_parts(parts, state).await? {
+                AdminOnly::Token(token) => Ok(Actor::Token(token)),
+                AdminOnly::Person(me) => Ok(Actor::Person(me)),
+            };
+        }
+        Ok(Actor::Person(Box::new(Me::from_request_parts(parts, state).await?)))
+    }
+}
+
+impl Actor {
+    /// A token of an admin counts as an admin; a person counts when they are one.
+    pub fn is_admin(&self) -> bool {
+        match self {
+            Actor::Token(_) => true,
+            Actor::Person(me) => me.admin,
+        }
+    }
+
+    /// The signed-in person, if this is one: a token has none.
+    pub fn person_id(&self) -> Option<&str> {
+        match self {
+            Actor::Token(_) => None,
+            Actor::Person(me) => Some(&me.person.id),
+        }
+    }
+
+    /// For the event log: the person's id, or `token:<id>`.
+    pub fn actor_id(&self) -> String {
+        match self {
+            Actor::Person(me) => me.person.id.clone(),
+            Actor::Token(token) => format!("token:{}", token.id),
+        }
+    }
+
+    /// A change that needs a recent sign-in. A token never has one.
+    pub fn require_fresh(&self) -> ApiResult<()> {
+        match self {
+            Actor::Token(_) => Err(ApiError::reauth()),
+            Actor::Person(me) => me.require_fresh(),
+        }
+    }
+}
+
 /// The bearer token of a request, if it has one.
 pub fn bearer(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get("authorization")?.to_str().ok()?;
