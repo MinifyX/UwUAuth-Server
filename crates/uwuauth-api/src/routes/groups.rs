@@ -4,7 +4,7 @@
 
 use super::people::{WindowIn, window_view, windows_from};
 use crate::errors::{ApiError, ApiResult};
-use crate::session::{ClientIp, Me};
+use crate::session::{Actor, ClientIp};
 use crate::{AppState, audit};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -95,7 +95,7 @@ fn view(group: &Group, members: usize, owners: &BTreeSet<String>, me: &str) -> V
     })
 }
 
-async fn list(State(state): State<AppState>, me: Me) -> ApiResult<Json<Value>> {
+async fn list(State(state): State<AppState>, actor: Actor) -> ApiResult<Json<Value>> {
     let groups = state.store.groups().await?;
     let membership = state.store.membership().await?;
     let everybody: Vec<String> = state
@@ -112,7 +112,12 @@ async fn list(State(state): State<AppState>, me: Me) -> ApiResult<Json<Value>> {
             .iter()
             .map(|group| {
                 let count = membership.people_in(&group.id, &everybody).len();
-                view(group, count, membership.owners.get(&group.id).unwrap_or(&empty), &me.person.id)
+                view(
+                    group,
+                    count,
+                    membership.owners.get(&group.id).unwrap_or(&empty),
+                    actor.person_id().unwrap_or_default(),
+                )
             })
             .collect::<Vec<_>>()
     )))
@@ -127,17 +132,17 @@ struct Fields {
     ldap_app_passwords_only: Option<bool>,
 }
 
-fn admin(me: &Me) -> ApiResult<()> {
-    if me.admin { Ok(()) } else { Err(ApiError::forbidden("Only admins can do this.")) }
+fn admin(actor: &Actor) -> ApiResult<()> {
+    if actor.is_admin() { Ok(()) } else { Err(ApiError::forbidden("Only admins can do this.")) }
 }
 
 async fn create(
     State(state): State<AppState>,
-    me: Me,
+    actor: Actor,
     ClientIp(ip): ClientIp,
     Json(fields): Json<Fields>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    admin(&me)?;
+    admin(&actor)?;
     let group = state
         .store
         .create_group(GroupFields {
@@ -147,24 +152,24 @@ async fn create(
             ldap_app_passwords_only: fields.ldap_app_passwords_only.unwrap_or(false),
         })
         .await?;
-    audit(&state, "group_created", Some(&me.person.id), None, Some(&group.id), &ip, json!({ "name": group.name }))
+    audit(&state, "group_created", Some(&actor.actor_id()), None, Some(&group.id), &ip, json!({ "name": group.name }))
         .await;
-    Ok((StatusCode::CREATED, Json(view(&group, 0, &BTreeSet::new(), &me.person.id))))
+    Ok((StatusCode::CREATED, Json(view(&group, 0, &BTreeSet::new(), actor.person_id().unwrap_or_default()))))
 }
 
 /// The group `id`, if the one asking may manage it: admins every group, owners theirs.
-async fn managed_group(state: &AppState, me: &Me, id: &str) -> ApiResult<(Group, bool)> {
+async fn managed_group(state: &AppState, actor: &Actor, id: &str) -> ApiResult<(Group, bool)> {
     let group = state.store.group(id).await?.ok_or_else(ApiError::not_found)?;
     let members = state.store.members(id).await?;
-    let owner = members.owners.contains(&me.person.id);
-    if !me.admin && !owner {
+    let owner = actor.person_id().is_some_and(|me| members.owners.iter().any(|owner| owner == me));
+    if !actor.is_admin() && !owner {
         return Err(ApiError::not_found());
     }
-    Ok((group, me.admin))
+    Ok((group, actor.is_admin()))
 }
 
-async fn show(State(state): State<AppState>, me: Me, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let (group, _) = managed_group(&state, &me, &id).await?;
+async fn show(State(state): State<AppState>, actor: Actor, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let (group, _) = managed_group(&state, &actor, &id).await?;
     let members = state.store.members(&id).await?;
     let membership = state.store.membership().await?;
     let everybody: Vec<String> = state
@@ -177,7 +182,7 @@ async fn show(State(state): State<AppState>, me: Me, Path(id): Path<String>) -> 
         .collect();
     let all = membership.people_in(&id, &everybody);
     let owners: BTreeSet<String> = members.owners.iter().cloned().collect();
-    let mut body = view(&group, all.len(), &owners, &me.person.id);
+    let mut body = view(&group, all.len(), &owners, actor.person_id().unwrap_or_default());
     body["people"] = json!(members.people);
     body["groups"] = json!(members.groups);
     body["everybody"] = json!(all);
@@ -187,12 +192,12 @@ async fn show(State(state): State<AppState>, me: Me, Path(id): Path<String>) -> 
 
 async fn change(
     State(state): State<AppState>,
-    me: Me,
+    actor: Actor,
     ClientIp(ip): ClientIp,
     Path(id): Path<String>,
     Json(fields): Json<Fields>,
 ) -> ApiResult<Json<Value>> {
-    let (group, is_admin) = managed_group(&state, &me, &id).await?;
+    let (group, is_admin) = managed_group(&state, &actor, &id).await?;
     if !is_admin && (fields.name.is_some() || fields.require_mfa.is_some() || fields.ldap_app_passwords_only.is_some())
     {
         return Err(ApiError::forbidden("Owners may change the description and the members."));
@@ -217,24 +222,25 @@ async fn change(
         )
         .await?
         .ok_or_else(ApiError::not_found)?;
-    audit(&state, "group_changed", Some(&me.person.id), None, Some(&id), &ip, json!({ "name": updated.name })).await;
+    audit(&state, "group_changed", Some(&actor.actor_id()), None, Some(&id), &ip, json!({ "name": updated.name }))
+        .await;
     Ok(Json(json!({ "id": updated.id, "name": updated.name })))
 }
 
 async fn remove(
     State(state): State<AppState>,
-    me: Me,
+    actor: Actor,
     ClientIp(ip): ClientIp,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    admin(&me)?;
+    admin(&actor)?;
     let group = state.store.group(&id).await?.ok_or_else(ApiError::not_found)?;
     if group.builtin.is_some() {
         return Err(ApiError::bad("builtin", "This group comes with the server and stays."));
     }
     let mut after = state.store.membership().await?;
     if admin_groups(&after).contains(&id) {
-        me.require_fresh()?;
+        actor.require_fresh()?;
     }
     after.people.remove(&id);
     after.groups.remove(&id);
@@ -243,7 +249,7 @@ async fn remove(
     }
     keep_admins(&state, &after).await?;
     state.store.delete_group(&id).await?;
-    audit(&state, "group_deleted", Some(&me.person.id), None, Some(&id), &ip, json!({ "name": group.name })).await;
+    audit(&state, "group_deleted", Some(&actor.actor_id()), None, Some(&id), &ip, json!({ "name": group.name })).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -257,12 +263,12 @@ struct MemberList {
 
 async fn set_members(
     State(state): State<AppState>,
-    me: Me,
+    actor: Actor,
     ClientIp(ip): ClientIp,
     Path(id): Path<String>,
     Json(body): Json<MemberList>,
 ) -> ApiResult<StatusCode> {
-    let (group, is_admin) = managed_group(&state, &me, &id).await?;
+    let (group, is_admin) = managed_group(&state, &actor, &id).await?;
     if id == EVERYONE_ID {
         return Err(ApiError::bad("builtin", "Everybody is in this group by themselves."));
     }
@@ -273,7 +279,7 @@ async fn set_members(
         return Err(ApiError::forbidden("Only admins change who is in a group that makes admins."));
     }
     if admin_group {
-        me.require_fresh()?;
+        actor.require_fresh()?;
     }
     let owners = match body.owners {
         Some(owners) if is_admin => owners,
@@ -287,10 +293,11 @@ async fn set_members(
     // group can open apps or put its members in a manager's care, so pulling in anybody else
     // would hand out what is not theirs to give. Who is in already may stay; leaving is free.
     if !is_admin {
-        let reachable = super::people::reachable(&state, &me.person.id).await?;
+        let me = actor.person_id().unwrap_or_default();
+        let reachable = super::people::reachable(&state, me).await?;
         let stranger = body.people.iter().any(|person| {
             people.contains(person)
-                && *person != me.person.id
+                && person.as_str() != me
                 && !current.people.contains(person)
                 && !reachable.contains(person)
         });
@@ -315,7 +322,7 @@ async fn set_members(
     audit(
         &state,
         "group_members_changed",
-        Some(&me.person.id),
+        Some(&actor.actor_id()),
         None,
         Some(&id),
         &ip,
@@ -327,21 +334,26 @@ async fn set_members(
 
 async fn set_windows(
     State(state): State<AppState>,
-    me: Me,
+    actor: Actor,
     ClientIp(ip): ClientIp,
     Path(id): Path<String>,
     Json(body): Json<Vec<WindowIn>>,
 ) -> ApiResult<StatusCode> {
-    admin(&me)?;
+    admin(&actor)?;
     state.store.group(&id).await?.ok_or_else(ApiError::not_found)?;
     let windows = windows_from(body)?;
     state.store.set_windows("group", &id, windows).await?;
-    audit(&state, "windows_changed", Some(&me.person.id), None, Some(&id), &ip, json!({})).await;
+    audit(&state, "windows_changed", Some(&actor.actor_id()), None, Some(&id), &ip, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::{TestServer, json as read_json};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{Value, json};
+
     #[test]
     fn group_names() {
         assert_eq!(super::group_name(" Kinder ").unwrap(), "Kinder");
@@ -349,5 +361,49 @@ mod tests {
         for bad in ["", "a,b", "x=y", "<script>", &"a".repeat(65)] {
             assert!(super::group_name(bad).is_err(), "{bad}");
         }
+    }
+
+    fn with_token(method: &str, path: &str, token: &str, body: Value) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_admin_token_manages_groups_but_never_the_admin_ones() {
+        let server = TestServer::new().await;
+        let admin = server.person("boss", true).await;
+        let created = admin.ok("POST", "/uwu/v1/tokens", json!({ "name": "script" })).await;
+        let token = created["secret"].as_str().unwrap().to_string();
+
+        let listed = server.send(with_token("GET", "/uwu/v1/groups", &token, json!({}))).await;
+        assert_eq!(listed.status(), StatusCode::OK);
+
+        let made = server.send(with_token("POST", "/uwu/v1/groups", &token, json!({ "name": "Kids" }))).await;
+        assert_eq!(made.status(), StatusCode::CREATED);
+        let kids = read_json(made).await["id"].as_str().unwrap().to_string();
+
+        let members = json!({ "people": [], "groups": [] });
+        let plain =
+            server.send(with_token("PUT", &format!("/uwu/v1/groups/{kids}/members"), &token, members.clone())).await;
+        assert_eq!(plain.status(), StatusCode::NO_CONTENT);
+
+        // Changing who is in Admins needs a recent sign-in: a token never has one.
+        let admins = "00000000-0000-4000-8000-000000000001";
+        let refused =
+            server.send(with_token("PUT", &format!("/uwu/v1/groups/{admins}/members"), &token, members)).await;
+        assert!(!refused.status().is_success(), "{}", refused.status());
+    }
+
+    #[tokio::test]
+    async fn a_person_who_is_no_admin_still_cannot_make_groups() {
+        let server = TestServer::new().await;
+        let kid = server.person("kid", false).await;
+        let response = kid.request("POST", "/uwu/v1/groups", Some(json!({ "name": "Nope" }))).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
