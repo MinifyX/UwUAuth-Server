@@ -28,6 +28,15 @@ curl -H "Authorization: Bearer uwu_…" https://auth.example.com/uwu/v1/people
 A read-only token may only `GET`. A token cannot make tokens, and nothing that needs a recent
 sign-in (downloading a backup, setting someone's password) works with a token.
 
+### App passwords for a proxy
+
+`GET /uwu/v1/app-passwords/check` with the token and an app password in `X-App-Password` (any
+spelling the portal shows it in) answers who it belongs to: `username`, `displayName`, `email` and
+the names of the `groups`. No name is needed with it. A wrong or missing secret is 401; a disabled
+or expired account, or one outside its time windows, is 403 with `detail.reason`
+(`disabled`, `expired`, `time`). Wrong secrets count per address like wrong LDAP binds. Every
+answer goes into the event log with the token as the actor.
+
 ## Conventions
 
 - JSON in and out, field names in camelCase. Times are RFC 3339 in UTC
