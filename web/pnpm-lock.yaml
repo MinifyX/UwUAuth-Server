@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@uwusuite/design':
-        specifier: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.11.0/uwusuite-design-1.11.0.tgz
-        version: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.11.0/uwusuite-design-1.11.0.tgz(lucide-react@1.70.0(@types/react@19.3.0)(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.13.0/uwusuite-design-1.13.0.tgz
+        version: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.13.0/uwusuite-design-1.13.0.tgz(lucide-react@1.70.0(@types/react@19.3.0)(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       lucide-react:
         specifier: ^1.70.0
         version: 1.70.0(@types/react@19.3.0)(react@19.3.0)
@@ -132,6 +132,12 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
+
+  '@blobatar/react@2.7.0':
+    resolution: {integrity: sha512-rysDM1+2qoeIwIezVw/em+ZxOMyqqjqJOGNEvtOOU1nFp0jmzyEjlXtJTDM6xPKamq59pq6wcG9+mHIUZV572A==}
+    peerDependencies:
+      blobatar: 2.x
+      react: '>=18'
 
   '@cacheable/memory@2.2.0':
     resolution: {integrity: sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ==}
@@ -425,9 +431,9 @@ packages:
     resolution: {integrity: sha512-Vwj9lUIW5Xq3wQ9w6gv3R86g1hMK8f2zNOdGTAgeXUMMXFK78G9ruCjjqutHMNJc0+CH7LYRnHeUB9IT8wFmcw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
-  '@uwusuite/design@https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.11.0/uwusuite-design-1.11.0.tgz':
-    resolution: {integrity: sha512-YJw3x68zPo9UiGaufghq9k5AQPw/O9b1rjVzexMWCi/R0loqyQBZOffaD07cz80g4ZuXT4J8mVdfXHKuRvS2LA==, tarball: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.11.0/uwusuite-design-1.11.0.tgz}
-    version: 1.11.0
+  '@uwusuite/design@https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.13.0/uwusuite-design-1.13.0.tgz':
+    resolution: {integrity: sha512-T2uNXsxrnM4JCDH5Lt2DlZhI3XpHVodSWEzlNC2wJDiAAp0EkGF4Fw5tOdW/Du0jUo6XJLCtRIGO46HMJ85xzQ==, tarball: https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.13.0/uwusuite-design-1.13.0.tgz}
+    version: 1.13.0
     engines: {node: '>=22'}
     hasBin: true
     peerDependencies:
@@ -497,6 +503,17 @@ packages:
     resolution: {integrity: sha512-GLQdD3y6UF8iVuMJl5fHgE4jdn/ua7n+toKfLgNlg3BqQtOZjpy68T8Tup8/wGWZCDlm7KMg7tPb4MPn7oN0TQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  blobatar@2.7.0:
+    resolution: {integrity: sha512-tL1p2J3dXE/Z9U/ITwHqU7HBHmTH+Am+hif1J1hWAhvFT1VYC2HG+eXtN7081yuY+L2lrp9bs/VaF7dVH3S2jw==}
+    peerDependencies:
+      react: '>=18'
+      vue: '>=3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      vue:
+        optional: true
 
   brace-expansion@5.0.12:
     resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
@@ -1199,6 +1216,11 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
+  '@blobatar/react@2.7.0(blobatar@2.7.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      blobatar: 2.7.0(react@19.3.0)
+      react: 19.3.0
+
   '@cacheable/memory@2.2.0':
     dependencies:
       '@cacheable/utils': 2.5.0
@@ -1463,16 +1485,20 @@ snapshots:
       '@typescript-eslint/types': 8.70.1
       eslint-visitor-keys: 5.0.1
 
-  '@uwusuite/design@https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.11.0/uwusuite-design-1.11.0.tgz(lucide-react@1.70.0(@types/react@19.3.0)(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@uwusuite/design@https://github.com/MinifyX/UwUSuite-Design/releases/download/v1.13.0/uwusuite-design-1.13.0.tgz(lucide-react@1.70.0(@types/react@19.3.0)(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
+      '@blobatar/react': 2.7.0(blobatar@2.7.0(react@19.3.0))(react@19.3.0)
       '@fontsource-variable/dm-sans': 5.3.0
       '@fontsource-variable/jetbrains-mono': 5.3.0
       '@fontsource-variable/manrope': 5.3.0
       '@fontsource-variable/rubik': 5.3.0
+      blobatar: 2.7.0(react@19.3.0)
       clsx: 2.1.1
       lucide-react: 1.70.0(@types/react@19.3.0)(react@19.3.0)
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
+    transitivePeerDependencies:
+      - vue
 
   '@vitejs/plugin-react@6.1.1(vite@8.3.3(@types/node@24.19.0))':
     dependencies:
@@ -1508,6 +1534,10 @@ snapshots:
   balanced-match@4.0.4: {}
 
   baseline-browser-mapping@2.11.26: {}
+
+  blobatar@2.7.0(react@19.3.0):
+    optionalDependencies:
+      react: 19.3.0
 
   brace-expansion@5.0.12:
     dependencies:

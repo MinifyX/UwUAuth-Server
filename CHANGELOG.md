@@ -3,6 +3,12 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.6
+
+- People without a picture get a blob (blobatar) instead of initials, the same one for the same
+  username everywhere in the web UI; it moves on hover and holds still with reduced motion.
+- Web UI on UwUSuite Design 1.13.0.
+
 ## 0.5.0-beta.5
 
 - `/healthz` follows the suite format: besides `ok`, `version` and `database` it answers with

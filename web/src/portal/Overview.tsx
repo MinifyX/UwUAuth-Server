@@ -81,7 +81,7 @@ export function Overview({ me }: { me: Me }) {
   return (
     <>
       <div className="hello">
-        <Avatar name={me.displayName} src={me.avatar} size={64} />
+        <Avatar name={me.displayName} seed={me.username} src={me.avatar} size={64} />
         <div>
           <h1 className="page-title">{t('Hallo, {name}!', { name: me.displayName })}</h1>
           <p className="muted">

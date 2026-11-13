@@ -103,7 +103,12 @@ export function PeopleList({
           {shown.map((person) => (
             <li key={person.id}>
               <button type="button" className="person-row" onClick={() => onOpen(person.id)}>
-                <Avatar name={person.displayName} src={person.avatar} size={40} />
+                <Avatar
+                  name={person.displayName}
+                  seed={person.username}
+                  src={person.avatar}
+                  size={40}
+                />
                 <span className="person-text">
                   <b>
                     {person.displayName}

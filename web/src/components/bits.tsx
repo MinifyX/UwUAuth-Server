@@ -1,5 +1,6 @@
 /** Small pieces several pages share: pictures, empty states, secrets shown once, links as QR codes. */
 
+import { AvatarBlob } from '@uwusuite/design';
 import { type ReactNode } from 'react';
 import { saveFile } from '../lib/api';
 import { copy } from '../lib/clipboard';
@@ -9,31 +10,25 @@ import { Icon } from './Icon';
 import { NyuScene, type SceneName } from './nyu/scenes';
 import { Qr } from './Qr';
 
-/** Initials for somebody without a picture: "Mia Maus" → "MM". */
-export function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  const letters = words.length > 1 ? [words[0]!, words[words.length - 1]!] : words;
-  return (
-    letters
-      .map((word) => [...word][0] ?? '')
-      .join('')
-      .toUpperCase() || '?'
-  );
-}
-
-/** A person's picture, or their initials on a tint. */
+/** A person's picture, or their blob: the same seed (username) gives the same blob everywhere. */
 export function Avatar({
   name,
   src,
+  seed,
   size = 36,
 }: {
   name: string;
   src: string | null | undefined;
+  seed?: string;
   size?: number;
 }) {
   return (
-    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.38 }}>
-      {src ? <img src={src} alt="" width={size} height={size} /> : initials(name)}
+    <span className="avatar" style={{ width: size, height: size }}>
+      {src ? (
+        <img src={src} alt="" width={size} height={size} />
+      ) : (
+        <AvatarBlob seed={seed ?? name} />
+      )}
     </span>
   );
 }

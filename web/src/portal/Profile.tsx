@@ -112,7 +112,7 @@ function PictureSection({ me }: { me: Me }) {
   return (
     <Section title={t('Bild')}>
       <div className="picture-row">
-        <Avatar name={me.displayName} src={me.avatar} size={72} />
+        <Avatar name={me.displayName} seed={me.username} src={me.avatar} size={72} />
         <div className="picture-actions">
           <p className="muted">{t('Apps, bei denen du dich mit UwUAuth anmeldest, zeigen es.')}</p>
           <div className="form-actions">
