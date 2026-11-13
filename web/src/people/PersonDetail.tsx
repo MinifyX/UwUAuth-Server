@@ -468,7 +468,7 @@ function PictureButton({
         disabled={busy}
         onClick={() => input.current?.click()}
       >
-        <Avatar name={person.displayName} src={person.avatar} size={72} />
+        <Avatar name={person.displayName} seed={person.username} src={person.avatar} size={72} />
         <span className="avatar-edit">
           <Icon name="pencil" size={14} />
         </span>

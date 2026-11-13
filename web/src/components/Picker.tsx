@@ -58,7 +58,12 @@ export function Picker({
               {choice?.kind === 'group' ? (
                 <Icon name="users" size={14} />
               ) : (
-                <Avatar name={choice?.label ?? '?'} src={choice?.avatar} size={20} />
+                <Avatar
+                  name={choice?.label ?? '?'}
+                  seed={choice?.sub}
+                  src={choice?.avatar}
+                  size={20}
+                />
               )}
               <span>{choice?.label ?? t('Unbekannt')}</span>
               {!disabled && <Icon name="close" size={12} />}
@@ -90,7 +95,7 @@ export function Picker({
                       <Icon name="users" />
                     </span>
                   ) : (
-                    <Avatar name={choice.label} src={choice.avatar} size={24} />
+                    <Avatar name={choice.label} seed={choice.sub} src={choice.avatar} size={24} />
                   )}
                   <span className="picker-text">
                     <b>{choice.label}</b>
