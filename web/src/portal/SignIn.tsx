@@ -9,7 +9,7 @@ import { errorText } from '../lib/errors';
 import { t, useLanguage } from '../lib/i18n';
 import { reloadMe } from '../lib/me';
 import { continueTarget, go, goTo, useRoute } from '../lib/route';
-import { autofillAvailable, available, getPasskey } from '../lib/webauthn';
+import { autofillAvailable, available, cancelled, getPasskey } from '../lib/webauthn';
 
 type Answer =
   | { status: 'signed_in'; restricted: boolean }
@@ -63,6 +63,7 @@ export function SignIn() {
     let stopped = false;
     const start = async () => {
       if (!(await autofillAvailable()) || stopped) return;
+      const started = Date.now();
       const controller = new AbortController();
       autofill.current = controller;
       try {
@@ -78,10 +79,14 @@ export function SignIn() {
         });
         await done(answer);
       } catch (e) {
-        if (!controller.signal.aborted && !stopped) {
-          setError(errorText(e));
-          setBusy(false);
+        if (controller.signal.aborted || stopped) return;
+        // Closed the prompt: offer the passkeys again, unless the browser refused right away.
+        if (cancelled(e)) {
+          if (Date.now() - started > 1000) void start();
+          return;
         }
+        setError(errorText(e));
+        setBusy(false);
       }
     };
     void start();
@@ -144,7 +149,7 @@ export function SignIn() {
   }
 
   return (
-    <Centered>
+    <Centered title={t('Anmelden')}>
       <div className="signin-head">
         <Nyu size={92} mood="happy" />
         <h1 className="card-title">{t('Anmelden')}</h1>
@@ -177,6 +182,7 @@ export function SignIn() {
             name="username"
             value={login}
             onChange={(e) => setLogin(e.target.value)}
+            autoFocus
             autoComplete="username webauthn"
             autoCapitalize="none"
             spellCheck={false}
@@ -186,7 +192,13 @@ export function SignIn() {
         </label>
         <label className="field">
           <span>{t('Passwort')}</span>
-          <PasswordInput value={password} onChange={setPassword} disabled={busy} />
+          <PasswordInput
+            name="password"
+            value={password}
+            onChange={setPassword}
+            disabled={busy}
+            required
+          />
         </label>
         <label className="check">
           <input
@@ -267,7 +279,7 @@ export function SecondStep({
   };
 
   return (
-    <Centered>
+    <Centered title={t('Noch ein Schritt')}>
       <div className="signin-head">
         <Nyu size={80} mood="sparkle" />
         <h1 className="card-title">{t('Noch ein Schritt')}</h1>
@@ -372,7 +384,7 @@ export function Forgot() {
     }
   };
   return (
-    <Centered>
+    <Centered title={t('Passwort vergessen?')}>
       <div className="signin-head">
         <Nyu size={80} mood={sent ? 'happy' : 'puzzled'} />
         <h1 className="card-title">{t('Passwort vergessen?')}</h1>

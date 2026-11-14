@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { Ago, Day, SecretOnce } from '../components/bits';
 import { FormError, Row, Section, useAction } from '../components/controls';
 import { Icon } from '../components/Icon';
@@ -450,6 +450,8 @@ function PasswordDialog({
   useLanguage();
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
+  const mismatchId = useId();
+  const mismatch = again.length > 0 && again !== password;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const min = me.server.passwordMinLength;
@@ -505,9 +507,17 @@ function PasswordDialog({
         </label>
         <label className="field">
           <span>{t('Noch einmal')}</span>
-          <PasswordInput value={again} onChange={setAgain} autoComplete="new-password" />
-          {again && again !== password && (
-            <small className="field-error">{t('Die beiden sind nicht gleich.')}</small>
+          <PasswordInput
+            value={again}
+            onChange={setAgain}
+            autoComplete="new-password"
+            invalid={mismatch}
+            describedBy={mismatch ? mismatchId : undefined}
+          />
+          {mismatch && (
+            <small className="field-error" id={mismatchId}>
+              {t('Die beiden sind nicht gleich.')}
+            </small>
           )}
         </label>
         <p className="field-hint">

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { Loading } from '../components/bits';
 import { FormError, Segmented } from '../components/controls';
 import { Icon } from '../components/Icon';
@@ -116,6 +116,7 @@ function Credential({
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
   const mismatch = again.length > 0 && again !== password;
+  const mismatchId = useId();
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (password.length >= minLength && password === again) onPassword(password);
@@ -170,9 +171,13 @@ function Credential({
               onChange={setAgain}
               autoComplete="new-password"
               disabled={busy}
+              invalid={mismatch}
+              describedBy={mismatch ? mismatchId : undefined}
             />
             {mismatch && (
-              <small className="field-error">{t('Die beiden sind nicht gleich.')}</small>
+              <small className="field-error" id={mismatchId}>
+                {t('Die beiden sind nicht gleich.')}
+              </small>
             )}
           </label>
           <FormError error={error} />

@@ -1,5 +1,6 @@
 import { NavIndicator, revealFrom } from '@uwusuite/design';
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { t, useLanguage } from '../lib/i18n';
 import { useToast } from '../lib/toast';
 import { Icon, type IconName } from './Icon';
@@ -29,6 +30,17 @@ export function Frame({
   const toast = useToast();
   return (
     <div className="shell">
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(event) => {
+          // The address after `#` is the page: jump by focus, not by link.
+          event.preventDefault();
+          document.getElementById('main')?.focus();
+        }}
+      >
+        {t('Zum Inhalt springen')}
+      </a>
       <header className="topbar">
         <a className="topbar-brand" href="/">
           <span aria-hidden="true" data-uwu-reveal-origin>
@@ -43,15 +55,27 @@ export function Frame({
         <span className="spacer" />
         {actions}
       </header>
-      <main className="stage">{children}</main>
-      {toast && (
-        <div className="toast" data-tone={toast.tone} role="status" key={toast.id}>
-          {toast.text}
-        </div>
-      )}
+      <main className="stage" id="main" tabIndex={-1}>
+        {children}
+      </main>
+      {/* Beside the page, not in it: an open dialog makes the page inert, the note stays heard. */}
+      {toast &&
+        createPortal(
+          <div className="toast" data-tone={toast.tone} role="status" key={toast.id}>
+            {toast.text}
+          </div>,
+          document.body,
+        )}
       <ReauthHost />
     </div>
   );
+}
+
+/** The window's title: the page's name first, so tabs and history tell pages apart. */
+function usePageTitle(title?: string) {
+  useEffect(() => {
+    document.title = title ? `${title} – UwUAuth` : 'UwUAuth';
+  }, [title]);
 }
 
 /** A side list of pages on a wide screen; below 1024px a drawer behind a menu button. */
@@ -93,6 +117,7 @@ export function Layout({
     };
   }, [open]);
   const here = items.find((item) => item.path === current);
+  usePageTitle(here && t(here.label));
   return (
     <div className="layout" ref={layout}>
       <div className="nav-bar">
@@ -157,7 +182,16 @@ export function PageTitle({ children, actions }: { children: ReactNode; actions?
 }
 
 /** A plain centred card, for sign-in, links, and "not for you". */
-export function Centered({ children, wide }: { children: ReactNode; wide?: boolean }) {
+export function Centered({
+  children,
+  wide,
+  title,
+}: {
+  children: ReactNode;
+  wide?: boolean;
+  title?: string;
+}) {
+  usePageTitle(title);
   return (
     <div className="centered">
       <div className={wide ? 'center-card wide' : 'center-card'}>{children}</div>

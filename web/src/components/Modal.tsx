@@ -61,6 +61,15 @@ export function Modal({
       dialog;
     first.focus();
     stack.push(dialog);
+    // Everything else in the page, outer dialogs too, is out of reach while this one is open.
+    const background = [...document.body.children].filter(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement &&
+        el !== dialog.parentElement &&
+        !el.inert &&
+        !el.classList.contains('toast'),
+    );
+    for (const el of background) el.inert = true;
 
     const onKey = (event: KeyboardEvent) => {
       if (stack[stack.length - 1] !== dialog) return;
@@ -95,6 +104,8 @@ export function Modal({
     return () => {
       window.removeEventListener('keydown', onKey);
       stack.splice(stack.indexOf(dialog), 1);
+      // Before focus goes back: an inert element does not take it.
+      for (const el of background) el.inert = false;
       previous?.focus();
     };
   }, []);

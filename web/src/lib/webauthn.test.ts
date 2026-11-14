@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertionJson,
   attestationJson,
+  cancelled,
   creationOptions,
   deviceName,
   fromBase64Url,
@@ -106,5 +107,14 @@ describe('deviceName', () => {
     expect(deviceName('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')).toBe('Mac');
     expect(deviceName('Mozilla/5.0 (X11; Linux x86_64)')).toBe('Linux');
     expect(deviceName('curl/8')).toBe('Passkey');
+  });
+});
+
+describe('cancelled', () => {
+  it('is true only for a closed or called-off prompt', () => {
+    expect(cancelled(new DOMException('x', 'NotAllowedError'))).toBe(true);
+    expect(cancelled(new DOMException('x', 'AbortError'))).toBe(true);
+    expect(cancelled(new DOMException('x', 'SecurityError'))).toBe(false);
+    expect(cancelled(new Error('NotAllowedError'))).toBe(false);
   });
 });

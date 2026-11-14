@@ -170,6 +170,14 @@ export async function getPasskey(json: Json, conditional?: { signal: AbortSignal
   return assertionJson(credential as unknown as Parameters<typeof assertionJson>[0]);
 }
 
+/** Whether a passkey request ended because someone closed the prompt or it was called off. */
+export function cancelled(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'NotAllowedError' || error.name === 'AbortError')
+  );
+}
+
 /** A name for a new passkey, from the device it is made on: "iPhone", "Windows", … */
 export function deviceName(agent: string): string {
   if (/iPhone/.test(agent)) return 'iPhone';

@@ -9,7 +9,13 @@ type Props = {
   disabled?: boolean;
   autoComplete?: string;
   id?: string;
+  name?: string;
+  required?: boolean;
   label?: string;
+  /** The field's value is wrong: marked, and read out with it. */
+  invalid?: boolean;
+  /** The id of the text that explains the field or its error. */
+  describedBy?: string;
 };
 
 /** A password field with an eye to peek, and a hint when Caps Lock is on. */
@@ -20,7 +26,11 @@ export function PasswordInput({
   disabled,
   autoComplete = 'current-password',
   id,
+  name,
+  required,
   label,
+  invalid,
+  describedBy,
 }: Props) {
   useLanguage();
   const [visible, setVisible] = useState(false);
@@ -29,6 +39,8 @@ export function PasswordInput({
     <span className="password-input">
       <input
         id={id}
+        name={name}
+        required={required}
         type={visible ? 'text' : 'password'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -40,6 +52,8 @@ export function PasswordInput({
         autoComplete={autoComplete}
         spellCheck={false}
         aria-label={label}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
       />
       <button
         type="button"
@@ -47,7 +61,6 @@ export function PasswordInput({
         onClick={() => setVisible(!visible)}
         aria-label={visible ? t('Passwort verbergen') : t('Passwort zeigen')}
         aria-pressed={visible}
-        tabIndex={-1}
       >
         <Icon name={visible ? 'eyeOff' : 'eye'} size={16} />
       </button>
