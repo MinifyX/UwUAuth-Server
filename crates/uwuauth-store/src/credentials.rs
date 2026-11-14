@@ -227,6 +227,34 @@ impl Store {
         .await
     }
 
+    /// The app password with this hash, for a caller that has no name to go with it. None when
+    /// no app password has the hash, or more than one does: then nobody is named.
+    pub async fn use_app_password_by_hash(&self, hash: Vec<u8>, ip: &str) -> Result<Option<AppPassword>> {
+        let ip = ip.to_string();
+        self.sqlite_write(move |tx| {
+            let mut found: Vec<AppPassword> = {
+                let mut statement = tx.prepare(
+                    "SELECT id, person_id, name, created, last_used, last_ip FROM app_passwords \
+                     WHERE hash = ?1 LIMIT 2",
+                )?;
+                statement.query_map([&hash], app_password_from)?.collect::<rusqlite::Result<_>>()?
+            };
+            if found.len() != 1 {
+                return Ok(None);
+            }
+            let mut only = found.remove(0);
+            let now = clock::now();
+            tx.execute(
+                "UPDATE app_passwords SET last_used = ?2, last_ip = ?3 WHERE id = ?1",
+                params![only.id, now, ip.clone()],
+            )?;
+            only.last_used = Some(now);
+            only.last_ip = Some(ip);
+            Ok(Some(only))
+        })
+        .await
+    }
+
     pub async fn remove_app_password(&self, person: &str, id: &str) -> Result<bool> {
         let (person, id) = (person.to_string(), id.to_string());
         self.directory_write(move |tx| {
