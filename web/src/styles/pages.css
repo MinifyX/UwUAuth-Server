@@ -291,6 +291,7 @@ button.stat:hover:not(:disabled) {
 
 .stat-value {
   font-size: var(--uwu-text-large);
+  font-variant-numeric: tabular-nums;
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.2;

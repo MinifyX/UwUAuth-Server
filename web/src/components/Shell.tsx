@@ -1,3 +1,4 @@
+import { NavIndicator, revealFrom } from '@uwusuite/design';
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { t, useLanguage } from '../lib/i18n';
 import { useToast } from '../lib/toast';
@@ -30,7 +31,7 @@ export function Frame({
     <div className="shell">
       <header className="topbar">
         <a className="topbar-brand" href="/">
-          <span aria-hidden="true">
+          <span aria-hidden="true" data-uwu-reveal-origin>
             <Nyu size={26} blink={false} />
           </span>
           <span className="wordmark">
@@ -74,6 +75,11 @@ export function Layout({
   const navId = useId();
   const menuButton = useRef<HTMLButtonElement>(null);
   const nav = useRef<HTMLElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
+  // Mounts once per start or sign-in, not per page: the pages change inside it.
+  useEffect(() => {
+    if (layout.current) revealFrom(layout.current);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const button = menuButton.current;
@@ -88,7 +94,7 @@ export function Layout({
   }, [open]);
   const here = items.find((item) => item.path === current);
   return (
-    <div className="layout">
+    <div className="layout" ref={layout}>
       <div className="nav-bar">
         <button
           type="button"
@@ -129,10 +135,11 @@ export function Layout({
             </button>
           </Fragment>
         ))}
+        <NavIndicator className="nav-pill" />
         <span className="spacer" />
         {foot}
       </nav>
-      <section className="page" inert={open}>
+      <section className="page uwu-page" key={current} inert={open}>
         {children}
       </section>
     </div>

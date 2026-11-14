@@ -1,3 +1,4 @@
+import { CountUp } from '@uwusuite/design';
 import { useEffect, useState } from 'react';
 import { Loading } from '../components/bits';
 import { Icon } from '../components/Icon';
@@ -72,7 +73,7 @@ export function Overview() {
           )}
         </p>
       )}
-      <div className="stat-grid">
+      <div className="stat-grid uwu-stagger">
         <Stat
           label={t('Personen')}
           value={data.people}
@@ -160,7 +161,7 @@ function Stat({
 }) {
   const content = (
     <>
-      <span className="stat-value">{value.toLocaleString()}</span>
+      <CountUp className="stat-value" value={value} />
       <span className="stat-label">{label}</span>
       {note && <span className="stat-note">{note}</span>}
     </>

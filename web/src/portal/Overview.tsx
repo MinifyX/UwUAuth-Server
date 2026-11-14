@@ -1,3 +1,4 @@
+import { CountUp } from '@uwusuite/design';
 import { useEffect, useState } from 'react';
 import { Avatar } from '../components/bits';
 import { Section } from '../components/controls';
@@ -131,9 +132,9 @@ export function Overview({ me }: { me: Me }) {
         </div>
       )}
 
-      <div className="stat-grid">
+      <div className="stat-grid uwu-stagger">
         <button type="button" className="stat link-stat" onClick={() => go('/security')}>
-          <span className="stat-value">{me.passkeys.length}</span>
+          <CountUp className="stat-value" value={me.passkeys.length} />
           <span className="stat-label">{t('Passkeys')}</span>
         </button>
         <button type="button" className="stat link-stat" onClick={() => go('/security')}>
@@ -141,7 +142,7 @@ export function Overview({ me }: { me: Me }) {
           <span className="stat-label">{t('Authenticator-App')}</span>
         </button>
         <button type="button" className="stat link-stat" onClick={() => go('/groups')}>
-          <span className="stat-value">{me.memberOf.length}</span>
+          <CountUp className="stat-value" value={me.memberOf.length} />
           <span className="stat-label">{t('Gruppen')}</span>
         </button>
         {me.manager && (
