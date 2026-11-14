@@ -3,6 +3,15 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.8
+
+- Keyboard and screen readers: the eye on the password field can be reached with Tab, the name
+  field has focus when the sign-in opens, and "The two do not match" is linked to its field.
+- A cancelled passkey prompt no longer shows an error and is offered again.
+- Open dialogs make the page behind them inert, and scrolling no longer runs through.
+- A "Skip to content" link, and every page has its own title.
+- Web UI on UwUSuite Design 1.16.0.
+
 ## 0.5.0-beta.7
 
 - Motion: after signing in the portal opens in a circle from Nyu, pages fade in, the numbers on
