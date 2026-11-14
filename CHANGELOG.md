@@ -3,6 +3,14 @@
 Each release gets a section here before its tag is pushed; CI copies the section into the GitHub
 release. Versions follow semver; `-beta.N` versions are pre-releases.
 
+## 0.5.0-beta.7
+
+- Motion: after signing in the portal opens in a circle from Nyu, pages fade in, the numbers on
+  the overviews count up and their tiles come in one after the other, and the active row in the
+  side list slides to the page you pick. All of it holds still with reduced motion.
+- Enter in a text field no longer submits while an input method is still composing.
+- Web UI on UwUSuite Design 1.15.0.
+
 ## 0.5.0-beta.6
 
 - People without a picture get a blob (blobatar) instead of initials, the same one for the same

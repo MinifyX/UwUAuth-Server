@@ -304,6 +304,8 @@ button.danger-text {
 }
 
 .side-nav {
+  /* Positioned up front, so NavIndicator never pins an inline `relative` over the drawer's `fixed`. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -331,8 +333,18 @@ button.danger-text {
 }
 
 .side-nav button[aria-current='page'] {
-  background: var(--uwu-pink-tint);
   color: var(--uwu-pink-ink);
+}
+
+/* The active background: the sliding pill (NavIndicator), the row itself until it is placed. */
+.side-nav button[aria-current='page']:not([data-uwu-indicated]),
+.nav-pill {
+  background: var(--uwu-pink-tint);
+}
+
+/* Hovering the active row shows the pill, not the plain button hover over it. */
+.side-nav button[data-uwu-indicated] {
+  background: transparent;
 }
 
 .nav-group {
